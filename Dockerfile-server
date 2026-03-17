@@ -17,6 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
+# 先复制 lib 目录（包含 sherpa-onnx jar 包），供 Maven 构建时使用
+COPY ./lib/ /build/lib/
+
 # 复制源代码并构建
 COPY ./src ./src
 COPY ./db ./db
@@ -37,9 +40,6 @@ RUN mkdir -p /build/models /build/lib
 
 # 复制整个 models 目录（包含 silero_vad.onnx 和可能预下载的模型）
 COPY ./models/ /build/models/
-
-# 复制整个 lib 目录（包含可能预下载的 JNI 库）
-COPY ./lib/ /build/lib/
 
 # Vosk STT 模型：本地有则跳过下载
 RUN if [ -d "/build/models/vosk-model" ] && [ "$(ls -A /build/models/vosk-model 2>/dev/null)" ]; then \
