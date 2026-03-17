@@ -41,19 +41,26 @@ public class CmsUtils {
     @Value("${xiaozhi.server.domain:}")
     private String domain;
 
-    // 初始化websocketAddress、otaAddress
+    // 初始化 websocketAddress、otaAddress
     @PostConstruct
     private void initializeAddresses() {
         if (domain != null && !domain.isEmpty()) {
-            websocketAddress = "wss://ws." + domain + WebSocketConfig.WS_PATH;
+            // 配置了域名时，使用 HTTPS/WSS 协议（Higress 反向代理场景）
+            websocketAddress = "wss://" + domain + WebSocketConfig.WS_PATH;
             otaAddress = "https://" + domain + "/api/device/ota";
-            serverAddress = "https://" + domain;
+            serverAddress = "https://" + domain + "/xz/";
+            logger.info("✅ 已配置域名模式：{}", domain);
         } else {
+            // 未配置域名时，使用 HTTP/WS 协议（直连模式）
             String serverIp = getServerIp();
-            websocketAddress = "ws://" + serverIp + ":" + port + WebSocketConfig.WS_PATH; // 默认WebSocket端口
+            websocketAddress = "ws://" + serverIp + ":" + port + WebSocketConfig.WS_PATH; // 默认 WebSocket 端口
             otaAddress = "http://" + serverIp + ":" + port + "/api/device/ota";
-            serverAddress = "http://" + serverIp + ":" + port;
+            serverAddress = "http://" + serverIp + ":" + port + "/xz/";
+            logger.info("⚠️ 未配置域名，使用直连模式：{}", serverAddress);
         }
+        logger.info("📡 WebSocket 地址：{}", websocketAddress);
+        logger.info("🔗 OTA 地址：{}", otaAddress);
+        logger.info("🌐 Server 地址：{}", serverAddress);
     }
 
     public static SysUser getUser() {
@@ -183,18 +190,22 @@ public class CmsUtils {
     private static final Pattern macPattern = Pattern.compile("^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$");
 
     /**
-     * 判断MAC地址是否合法
+     * 判断 MAC 地址是否合法
      */
     public boolean isMacAddressValid(String mac) {
+        // 首先检查是否为 null
+        if (mac == null) {
+            return false;
+        }
         // 正则校验格式
         if (!macPattern.matcher(mac).matches()) {
             return false;
         }
-        // 校验MAC地址是否为单播地址
+        // 校验 MAC 地址是否为单播地址
         String normalized = mac.toLowerCase();
         String[] parts = normalized.split("[:-]");
         int firstByte = Integer.parseInt(parts[0], 16);
-        return (firstByte & 1) == 0; // 最低位为0表示单播地址，合法
+        return (firstByte & 1) == 0; // 最低位为 0 表示单播地址，合法
     }
 
     /**

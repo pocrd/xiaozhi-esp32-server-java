@@ -25,6 +25,7 @@ services:
     networks:
       - app-network
     environment:
+      - SPRING_PROFILES_ACTIVE=prod
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATASOURCE_URL=jdbc:mysql://rm-bp1i047rt28fajm69.mysql.rds.aliyuncs.com/xiaozhi?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
       - SPRING_DATASOURCE_USERNAME=mcgo
