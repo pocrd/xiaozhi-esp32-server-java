@@ -1,28 +1,8 @@
 services:
-  mysql:
-    build:
-      context: .
-      dockerfile: Dockerfile-mysql
-    ports:
-      - "13306:3306"  # 修改为 13306 或其他未使用的端口
-    networks:
-      - app-network
-    volumes:
-      - mysql_data:/var/lib/mysql  # 持久化数据
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "xiaozhi", "-p123456"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
   node:
     build:
       context: .
       dockerfile: Dockerfile-node
-    depends_on:
-      mysql:
-        condition: service_healthy
     ports:
       - "8085:8084"
     networks:
@@ -40,18 +20,15 @@ services:
       # 添加构建缓存设置
       cache_from:
         - eclipse-temurin:21-jre
-    depends_on:
-      mysql:
-        condition: service_healthy
     ports:
       - "8091:8091"
     networks:
       - app-network
     environment:
       - SPRING_DATA_REDIS_HOST=redis
-      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/xiaozhi?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-      - SPRING_DATASOURCE_USERNAME=xiaozhi
-      - SPRING_DATASOURCE_PASSWORD=123456
+      - SPRING_DATASOURCE_URL=jdbc:mysql://rm-bp1i047rt28fajm69.mysql.rds.aliyuncs.com/xiaozhi?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+      - SPRING_DATASOURCE_USERNAME=mcgo
+      - SPRING_DATASOURCE_PASSWORD=ukj5eWLVVp79MqK
     volumes:
       - maven_repo:/root/.m2/repository  # 持久化Maven仓库
     restart: on-failure  # 添加重启策略，如果启动失败会自动重试
@@ -68,5 +45,4 @@ networks:
     driver: bridge
 
 volumes:
-  mysql_data:  # 持久化数据卷
-  maven_repo:  # 持久化Maven仓库
+  maven_repo:  # 持久化 Maven 仓库
