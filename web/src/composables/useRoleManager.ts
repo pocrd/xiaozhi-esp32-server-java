@@ -141,13 +141,13 @@ export function useRoleManager() {
       // 2. 并行加载所有语音JSON文件和 sherpa-onnx 动态音色
       const sherpaConfig = ttsConfigs.value.find(c => c.provider === 'sherpa-onnx')
       const [edgeVoices, aliyunVoices, aliyunNlsVoices, volcengineVoices, xfyunVoices, minimaxVoices, tencentVoices, sherpaRes] = await Promise.all([
-        loadVoiceJson('/static/assets/edgeVoicesList.json', 'edge'),
-        loadVoiceJson('/static/assets/aliyunVoicesList.json', 'aliyun'),
-        loadVoiceJson('/static/assets/aliyunNlsVoicesList.json', 'aliyun-nls'),
-        loadVoiceJson('/static/assets/volcengineVoicesList.json', 'volcengine'),
-        loadVoiceJson('/static/assets/xfyunVoicesList.json', 'xfyun'),
-        loadVoiceJson('/static/assets/minimaxVoicesList.json', 'minimax'),
-        loadVoiceJson('/static/assets/tencentVoicesList.json', 'tencent'),
+        loadVoiceJson('/xz/static/assets/edgeVoicesList.json', 'edge'),
+        loadVoiceJson('/xz/static/assets/aliyunVoicesList.json', 'aliyun'),
+        loadVoiceJson('/xz/static/assets/aliyunNlsVoicesList.json', 'aliyun-nls'),
+        loadVoiceJson('/xz/static/assets/volcengineVoicesList.json', 'volcengine'),
+        loadVoiceJson('/xz/static/assets/xfyunVoicesList.json', 'xfyun'),
+        loadVoiceJson('/xz/static/assets/minimaxVoicesList.json', 'minimax'),
+        loadVoiceJson('/xz/static/assets/tencentVoicesList.json', 'tencent'),
         sherpaConfig ? querySherpaVoices().catch(() => ({ data: [] })) : Promise.resolve({ data: [] })
       ])
 
