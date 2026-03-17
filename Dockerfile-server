@@ -41,26 +41,26 @@ RUN mkdir -p /build/models /build/lib
 # 复制整个 models 目录（包含 silero_vad.onnx 和可能预下载的模型）
 COPY ./models/ /build/models/
 
-# Vosk STT 模型：本地有则跳过下载
-RUN if [ -d "/build/models/vosk-model" ] && [ "$(ls -A /build/models/vosk-model 2>/dev/null)" ]; then \
-        echo ">>> 使用本地预下载的 Vosk 模型"; \
-    else \
-        echo ">>> 本地无 Vosk 模型，开始在线下载..."; \
-        mkdir -p /vosk_cache; \
-        if [ "$VOSK_MODEL_SIZE" = "small" ]; then \
-            VOSK_NAME="vosk-model-small-cn-0.22"; \
-        else \
-            VOSK_NAME="vosk-model-cn-0.22"; \
-        fi; \
-        if [ ! -d "/vosk_cache/${VOSK_NAME}" ]; then \
-            echo "下载 ${VOSK_NAME} ..."; \
-            cd /vosk_cache && \
-            wget -q https://alphacephei.com/vosk/models/${VOSK_NAME}.zip && \
-            unzip -q ${VOSK_NAME}.zip && \
-            rm -f ${VOSK_NAME}.zip; \
-        fi; \
-        cp -r /vosk_cache/${VOSK_NAME} /build/models/vosk-model; \
-    fi
+# Vosk STT 模型：跳过下载（如需要请取消注释）
+# RUN if [ -d "/build/models/vosk-model" ] && [ "$(ls -A /build/models/vosk-model 2>/dev/null)" ]; then \
+#         echo ">>> 使用本地预下载的 Vosk 模型"; \
+#     else \
+#         echo ">>> 本地无 Vosk 模型，开始在线下载..."; \
+#         mkdir -p /vosk_cache; \
+#         if [ "$VOSK_MODEL_SIZE" = "small" ]; then \
+#             VOSK_NAME="vosk-model-small-cn-0.22"; \
+#         else \
+#             VOSK_NAME="vosk-model-cn-0.22"; \
+#         fi; \
+#         if [ ! -d "/vosk_cache/${VOSK_NAME}" ]; then \
+#             echo "下载 ${VOSK_NAME} ..."; \
+#             cd /vosk_cache && \
+#             wget -q https://alphacephei.com/vosk/models/${VOSK_NAME}.zip && \
+#             unzip -q ${VOSK_NAME}.zip && \
+#             rm -f ${VOSK_NAME}.zip; \
+#         fi; \
+#         cp -r /vosk_cache/${VOSK_NAME} /build/models/vosk-model; \
+#     fi
 
 # sherpa-onnx TTS 模型：本地有则跳过下载
 RUN if [ "$TTS_MODEL" = "none" ] || [ -z "$TTS_MODEL" ]; then \
