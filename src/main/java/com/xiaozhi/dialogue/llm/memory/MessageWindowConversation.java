@@ -21,7 +21,7 @@ public class MessageWindowConversation extends Conversation {
         this.maxMessages = maxMessages;
 
         logger.info("加载设备{}的普通消息(SysMessage.MESSAGE_TYPE_NORMAL)作为对话历史",device.getDeviceId());
-        List<Message> history = chatMemory.find(device.getDeviceId(), role.getRoleId(), maxMessages);
+        List<Message> history = maxMessages <= 0 ? Collections.emptyList() : chatMemory.find(device.getDeviceId(), role.getRoleId(), maxMessages);
         super.messages.addAll(history) ;
     }
 
@@ -83,6 +83,9 @@ public class MessageWindowConversation extends Conversation {
                     messages.removeLast();
                 }
             }else{
+                if (maxMessages <= 0 && message instanceof UserMessage) {
+                    messages.clear();
+                }
                 messages.add(message);
             }
         }else{
@@ -93,10 +96,10 @@ public class MessageWindowConversation extends Conversation {
     @Override
     public List<Message> messages() {
         // maxMessages一般设置为偶数，而实际调用此方法时一般是已添加了UserMessage。缩减缓存的历史消息size时，一般是移除一轮（User+Assistant）
-        while (messages.size() > maxMessages+1) {
-            messages.remove(0);
-            messages.remove(0);
-        }
+        // while (messages.size() > maxMessages+1) {
+        //     messages.remove(0);
+        //     messages.remove(0);
+        // }
         // 新消息列表对象，避免使用过程中污染原始列表对象
         List<Message> historyMessages = new ArrayList<>();
         var roleSystemMessage = roleSystemMessage();

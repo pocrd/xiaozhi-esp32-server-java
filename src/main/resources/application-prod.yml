@@ -30,3 +30,5 @@ xiaozhi:
   server:
     domain: xz.caringfamily.cn
     
+conversation:
+  max-messages: 0
