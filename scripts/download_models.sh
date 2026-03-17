@@ -261,7 +261,7 @@ case "${1:-all}" in
         show_status
         ;;
     all)
-        download_stt "$VOSK_MODEL_SIZE"
+        #download_stt "$VOSK_MODEL_SIZE"
         download_tts
         download_jni_lib
         show_status
