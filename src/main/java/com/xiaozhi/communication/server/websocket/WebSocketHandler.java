@@ -45,7 +45,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         Map<String, String> headers = getHeadersFromSession(session);
-        String deviceIdAuth = headers.get("device-id");
+        String deviceIdAuth = headers.get("x-dubbo-device-id");
         String token = headers.get("Authorization");
         if (deviceIdAuth == null || deviceIdAuth.isEmpty()) {
             logger.error("设备ID为空");
@@ -200,7 +200,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
 
     private Map<String, String> getHeadersFromSession(WebSocketSession session) {
         // 尝试从请求头获取设备ID
-        String[] deviceKeys = { "device-id", "mac_address", "uuid", "Authorization" };
+        String[] deviceKeys = { "x-dubbo-device-id", "mac_address", "uuid", "Authorization" };
 
         Map<String, String> headers = new HashMap<>();
 

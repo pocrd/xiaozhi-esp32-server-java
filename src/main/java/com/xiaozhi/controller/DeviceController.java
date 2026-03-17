@@ -439,11 +439,11 @@ public class DeviceController extends BaseController {
     @ResponseBody
     @Operation(summary = "查询OTA激活状态", description = "返回OTA激活状态")
     public ResponseEntity<String> otaActivate(
-        @Parameter(name = "Device-Id", description = "设备唯一标识", required = true, in = ParameterIn.HEADER)
-        @RequestHeader("Device-Id") String deviceId) {
+        @Parameter(name = "x-dubbo-device-id", description = "设备唯一标识", required = true, in = ParameterIn.HEADER)
+        @RequestHeader("x-dubbo-device-id") String deviceId) {
         try {
-            if(!cmsUtils.isMacAddressValid(deviceId)){
-                return ResponseEntity.status(202).build();
+            if (deviceId == null || deviceId.isEmpty()){
+                return ResponseEntity.status(403).build();
             }
             // 解析请求体
             SysDevice sysDevice = deviceService.selectDeviceById(deviceId);
