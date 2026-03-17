@@ -265,7 +265,7 @@ public class DeviceController extends BaseController {
     @ResponseBody
     @Operation(summary = "处理OTA请求", description = "返回OTA结果")
     public ResponseEntity<byte[]> ota(
-        @Parameter(description = "设备ID") @RequestHeader("Device-Id") String deviceIdAuth,
+        @Parameter(description = "设备ID") @RequestHeader("x-dubbo-device-id") String deviceIdAuth,
         @RequestBody(required = false) String requestBody,
         HttpServletRequest request) {
         try {
@@ -277,13 +277,10 @@ public class DeviceController extends BaseController {
                 try {
                     Map<String, Object> jsonData = JsonUtil.OBJECT_MAPPER.readValue(requestBody, new TypeReference<>() {});
 
-                    // 获取设备ID (MAC地址)
-                    if (deviceIdAuth == null) {
-                        if (jsonData.containsKey("mac_address")) {
-                            deviceIdAuth = (String) jsonData.get("mac_address");
-                        } else if (jsonData.containsKey("mac")) {
-                            deviceIdAuth = (String) jsonData.get("mac");
-                        }
+                    if (jsonData.containsKey("mac_address")) {
+                        device.setDeviceName((String) jsonData.get("mac_address"));
+                    } else if (jsonData.containsKey("mac")) {
+                        device.setDeviceName((String) jsonData.get("mac"));
                     }
 
                     // 提取芯片型号
@@ -316,9 +313,10 @@ public class DeviceController extends BaseController {
                 }
             }
 
-            if (deviceIdAuth == null || !cmsUtils.isMacAddressValid(deviceIdAuth)) {
+            if (deviceIdAuth == null || !cmsUtils.isMacAddressValid(device.getDeviceName())) {
                 Map<String, Object> errorResponse = new HashMap<>();
-                errorResponse.put("error", "设备ID不正确");
+                logger.error("设备MAC不正确{}", device.getDeviceName());
+                errorResponse.put("error", "设备MAC不正确");
                 byte[] responseBytes = JsonUtil.OBJECT_MAPPER.writeValueAsBytes(errorResponse);
                 HttpHeaders headers = new HttpHeaders();
                 headers.setContentType(MediaType.APPLICATION_JSON);
@@ -353,23 +351,40 @@ public class DeviceController extends BaseController {
 
             // 检查设备是否已绑定
             if (ObjectUtils.isEmpty(queryDevice)) {
-                // 设备未绑定，生成验证码
+                // 如果是 mTLS 请求，自动注册设备
+                logger.info("mTLS 设备未绑定，自动注册：deviceId={}, ip={}", deviceId, device.getIp());
                 try {
-                    SysDevice codeResult = deviceService.generateCode(device);
-                    Map<String, Object> activationData = new HashMap<>();
-                    activationData.put("code", codeResult.getCode());
-                    activationData.put("message", codeResult.getCode());
-                    activationData.put("challenge", deviceId);
-                    responseData.put("activation", activationData);
+                    // // 查询管理员用户
+                    // List<SysUser> adminUsers = sysUserService.queryUsers(
+                    //     new SysUser().setIsAdmin("1"), new PageFilter(0, 1));
+                    
+                    // if (!adminUsers.isEmpty()) {
+                        // device.setUserId(adminUsers.get(0).getUserId());
+                        device.setUserId(1);
+                        
+                        // 添加设备到数据库
+                        int row = deviceService.add(device);
+                        if (row > 0) {
+                            logger.info("mTLS 设备自动注册成功：deviceId={}, userId={}", deviceId, device.getUserId());
+                        }
+                    // } else {
+                    //     logger.warn("未找到管理员用户，无法自动注册 mTLS 设备");
+                    // }
+
+                    String websocketToken = "";
+                    Map<String, Object> websocketData = new HashMap<>();
+                    websocketData.put("url", cmsUtils.getWebsocketAddress());
+                    websocketData.put("token", websocketToken);
+                    responseData.put("websocket", websocketData);
                 } catch (Exception e) {
-                    logger.error("生成验证码失败", e);
+                    logger.error("mTLS 设备自动注册失败：{}", e.getMessage(), e);
                     Map<String, Object> errorResponse = new HashMap<>();
-                    errorResponse.put("error", "生成验证码失败");
+                    errorResponse.put("error", "mTLS 设备自动注册失败");
                     byte[] responseBytes = JsonUtil.OBJECT_MAPPER.writeValueAsBytes(errorResponse);
                     HttpHeaders headers = new HttpHeaders();
                     headers.setContentType(MediaType.APPLICATION_JSON);
                     headers.setContentLength(responseBytes.length);
-                    return new ResponseEntity<>(responseBytes, headers, HttpStatus.INTERNAL_SERVER_ERROR);
+                    return new ResponseEntity<>(responseBytes, headers, HttpStatus.BAD_REQUEST);
                 }
             } else {
                 // 设备已绑定，设置连接及认证信息
