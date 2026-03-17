@@ -239,6 +239,10 @@ public class DialogueService{
                 return;
             }
             sessionManager.updateLastActivity(sessionId);
+            String guaxiang = (String) session.getAttribute("guaxiang");
+            if (guaxiang != null && !guaxiang.isEmpty()) {
+                inputText = "卦象是:" + guaxiang + ". " + inputText;
+            }
             // 发送识别结果
             messageService.sendSttMessage(session, inputText);
 
