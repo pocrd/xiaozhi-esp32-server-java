@@ -63,35 +63,35 @@ COPY ./models/ /build/models/
 #     fi
 
 # sherpa-onnx TTS 模型：本地有则跳过下载
-RUN if [ "$TTS_MODEL" = "none" ] || [ -z "$TTS_MODEL" ]; then \
-        echo ">>> 跳过 TTS 模型下载 (TTS_MODEL=none)"; \
-    elif [ -f "/build/models/tts/${TTS_MODEL}/model.onnx" ]; then \
-        echo ">>> 使用本地预下载的 TTS 模型: ${TTS_MODEL}"; \
-    else \
-        echo ">>> 本地无 TTS 模型，开始在线下载 ${TTS_MODEL} ..."; \
-        mkdir -p /build/models/tts && \
-        cd /build/models/tts && \
-        wget -q -c https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${TTS_MODEL}.tar.bz2 && \
-        tar xf ${TTS_MODEL}.tar.bz2 && \
-        rm -f ${TTS_MODEL}.tar.bz2; \
-        echo "TTS 模型下载完成: ${TTS_MODEL}"; \
-    fi
+# RUN if [ "$TTS_MODEL" = "none" ] || [ -z "$TTS_MODEL" ]; then \
+#         echo ">>> 跳过 TTS 模型下载 (TTS_MODEL=none)"; \
+#     elif [ -f "/build/models/tts/${TTS_MODEL}/model.onnx" ]; then \
+#         echo ">>> 使用本地预下载的 TTS 模型: ${TTS_MODEL}"; \
+#     else \
+#         echo ">>> 本地无 TTS 模型，开始在线下载 ${TTS_MODEL} ..."; \
+#         mkdir -p /build/models/tts && \
+#         cd /build/models/tts && \
+#         wget -q -c https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${TTS_MODEL}.tar.bz2 && \
+#         tar xf ${TTS_MODEL}.tar.bz2 && \
+#         rm -f ${TTS_MODEL}.tar.bz2; \
+#         echo "TTS 模型下载完成: ${TTS_MODEL}"; \
+#     fi
 
 # sherpa-onnx JNI 原生库：从 native jar 中提取，本地有则跳过
-RUN if [ -f "/build/lib/libsherpa-onnx-jni.so" ] && [ -f "/build/lib/libonnxruntime.so" ]; then \
-        echo ">>> 使用本地预下载的 sherpa-onnx JNI 库"; \
-    else \
-        SHERPA_VERSION="1.12.23"; \
-        echo ">>> 本地无 JNI 库，从 native jar 下载 sherpa-onnx v${SHERPA_VERSION} ..."; \
-        cd /tmp && \
-        wget -q -c https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/sherpa-onnx-native-lib-linux-x64-v${SHERPA_VERSION}.jar \
-             -O sherpa-native.jar && \
-        unzip -o sherpa-native.jar "sherpa-onnx/native/linux-x64/*" -d /tmp/sherpa-extract && \
-        cp /tmp/sherpa-extract/sherpa-onnx/native/linux-x64/libsherpa-onnx-jni.so /build/lib/ && \
-        cp /tmp/sherpa-extract/sherpa-onnx/native/linux-x64/libonnxruntime.so /build/lib/ && \
-        rm -rf /tmp/sherpa-native.jar /tmp/sherpa-extract; \
-        echo "sherpa-onnx JNI 库提取完成"; \
-    fi
+# RUN if [ -f "/build/lib/libsherpa-onnx-jni.so" ] && [ -f "/build/lib/libonnxruntime.so" ]; then \
+#         echo ">>> 使用本地预下载的 sherpa-onnx JNI 库"; \
+#     else \
+#         SHERPA_VERSION="1.12.23"; \
+#         echo ">>> 本地无 JNI 库，从 native jar 下载 sherpa-onnx v${SHERPA_VERSION} ..."; \
+#         cd /tmp && \
+#         wget -q -c https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/sherpa-onnx-native-lib-linux-x64-v${SHERPA_VERSION}.jar \
+#              -O sherpa-native.jar && \
+#         unzip -o sherpa-native.jar "sherpa-onnx/native/linux-x64/*" -d /tmp/sherpa-extract && \
+#         cp /tmp/sherpa-extract/sherpa-onnx/native/linux-x64/libsherpa-onnx-jni.so /build/lib/ && \
+#         cp /tmp/sherpa-extract/sherpa-onnx/native/linux-x64/libonnxruntime.so /build/lib/ && \
+#         rm -rf /tmp/sherpa-native.jar /tmp/sherpa-extract; \
+#         echo "sherpa-onnx JNI 库提取完成"; \
+#     fi
 
 # ============================================================
 # 运行时镜像
