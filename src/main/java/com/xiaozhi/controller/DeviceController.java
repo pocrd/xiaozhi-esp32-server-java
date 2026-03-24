@@ -1,6 +1,7 @@
 package com.xiaozhi.controller;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -334,8 +335,9 @@ public class DeviceController extends BaseController {
                 device.setLocation(ipInfo.getLocation());
             }
 
-            // 查询设备是否已绑定
-            List<SysDevice> queryDevice = deviceService.query(device, new PageFilter());
+            // 查询设备是否已绑定 - 只根据 deviceId 查询，避免其他字段影响查询结果
+            SysDevice queryDeviceById = deviceService.selectDeviceById(deviceId);
+            List<SysDevice> queryDevice = queryDeviceById != null ? Arrays.asList(queryDeviceById) : Collections.emptyList();
             Map<String, Object> responseData = new HashMap<>();
             Map<String, Object> firmwareData = new HashMap<>();
             Map<String, Object> serverTimeData = new HashMap<>();
