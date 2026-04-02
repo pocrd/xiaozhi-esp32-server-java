@@ -383,6 +383,7 @@ public class MessageHandler {
 
         if (message.getMsg() != null && !message.getMsg().isEmpty()) {
             chatSession.setAttribute("guaxiang", message.getMsg());
+            logger.info("收到卦象信息 - SessionId: {}, Guaxiang: {}", sessionId, message.getMsg());
         }
 
         // 根据state处理不同的监听状态
