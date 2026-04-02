@@ -191,6 +191,11 @@ public class DialogueService{
                 if (intent != null) {
                     handleIntent(session, intent, finalText);
                 } else {
+                    // 如果有卦象信息，加入到识别结果中交给LLM处理
+                    String guaxiang = (String) session.getAttribute("guaxiang");
+                    if (guaxiang != null && !guaxiang.isEmpty()) {
+                        finalText = "卦象是:" + guaxiang + ". " + finalText;
+                    }
                     // 3. 无明确意图，走LLM+TTS流程
                     persona.chat(finalText);
                 }
