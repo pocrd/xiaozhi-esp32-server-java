@@ -46,7 +46,7 @@ spring:
 
   # Flyway 数据库版本管理
   flyway:
-    enabled: true
+    enabled: false
     locations: classpath:db/migration
     baseline-on-migrate: true
     baseline-version: 0
@@ -93,7 +93,7 @@ spring:
 
   # 激活的配置文件（默认为开发环境）
   profiles:
-    active: dev
+    active: prod
 
   # MCP 客户端配置
   ai:
