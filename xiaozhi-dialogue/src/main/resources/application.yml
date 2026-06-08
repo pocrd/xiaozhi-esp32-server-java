@@ -55,8 +55,8 @@ spring:
       enabled: true
 
   # 激活开发环境，覆盖此处配置使用 application-dev.yml
-  profiles:
-    active: dev
+  # profiles:
+  #   active: dev
 
 mybatis:
   mapper-locations: classpath*:mapper/*.xml,classpath*:mapper/**/*.xml
