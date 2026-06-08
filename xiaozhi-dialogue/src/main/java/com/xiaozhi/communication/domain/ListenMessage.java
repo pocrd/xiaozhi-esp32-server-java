@@ -15,4 +15,5 @@ public final class ListenMessage extends Message {
     private ListenState state;
     private ListenMode mode;
     private String text;
+    private String msg;
 }

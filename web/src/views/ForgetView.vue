@@ -234,7 +234,7 @@ const handleResetPassword = async () => {
   left: 0;
   width: 100%;
   height: 100%;
-  background: url('/static/img/galaxy.jpg') center center;
+  background: url('/xz/static/img/galaxy.jpg') center center;
   background-size: cover;
   background-repeat: no-repeat;
   z-index: 0;

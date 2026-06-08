@@ -1,28 +1,9 @@
 services:
-  mysql:
-    build:
-      context: .
-      dockerfile: Dockerfile-mysql
-    ports:
-      - "3306:3306"  # 修改为 3306 或其他未使用的端口
-    networks:
-      - app-network
-    volumes:
-      - mysql_data:/var/lib/mysql  # 持久化数据
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "xiaozhi", "-p123456"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
 
   node:
     build:
       context: ./web
       dockerfile: ../Dockerfile-node
-    depends_on:
-      mysql:
-        condition: service_healthy
     ports:
       - "8084:8084"
     networks:
@@ -42,18 +23,15 @@ services:
       # 添加构建缓存设置
       cache_from:
         - eclipse-temurin:21-jre
-    depends_on:
-      mysql:
-        condition: service_healthy
     ports:
       - "8091:8091"
     networks:
       - app-network
     environment:
       - SPRING_DATA_REDIS_HOST=redis
-      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/xiaozhi?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-      - SPRING_DATASOURCE_USERNAME=xiaozhi
-      - SPRING_DATASOURCE_PASSWORD=123456
+      - SPRING_DATASOURCE_URL=jdbc:mysql://rm-bp1i047rt28fajm69.mysql.rds.aliyuncs.com/xiaozhi?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+      - SPRING_DATASOURCE_USERNAME=mcgo
+      - SPRING_DATASOURCE_PASSWORD=ukj5eWLVVp79MqK
       - HOST_IP=${HOST_IP:-}
     restart: always  # 自动重启
     deploy:
@@ -76,18 +54,15 @@ services:
         - DOWNLOAD_PROXY=${BUILD_PROXY:-}
       cache_from:
         - eclipse-temurin:21-jre
-    depends_on:
-      mysql:
-        condition: service_healthy
     ports:
       - "8092:8092"
     networks:
       - app-network
     environment:
       - SPRING_DATA_REDIS_HOST=redis
-      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/xiaozhi?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-      - SPRING_DATASOURCE_USERNAME=xiaozhi
-      - SPRING_DATASOURCE_PASSWORD=123456
+      - SPRING_DATASOURCE_URL=jdbc:mysql://rm-bp1i047rt28fajm69.mysql.rds.aliyuncs.com/xiaozhi?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+      - SPRING_DATASOURCE_USERNAME=mcgo
+      - SPRING_DATASOURCE_PASSWORD=ukj5eWLVVp79MqK
       - HOST_IP=${HOST_IP:-}
     restart: always
     deploy:
@@ -134,5 +109,4 @@ networks:
     name: xiaozhi-network
 
 volumes:
-  mysql_data:  # 持久化数据卷
   redis_data:  # 持久化Redis数据

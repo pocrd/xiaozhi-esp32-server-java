@@ -363,6 +363,12 @@ public class MessageHandler {
 
         chatSession.setMode(message.getMode());
 
+        if (message.getMsg() != null && !message.getMsg().isEmpty()) {
+            chatSession.setGuaxiang(message.getMsg());
+            log.info("收到卦象信息 - SessionId: {}, Guaxiang: {}", sessionId, message.getMsg());
+        }
+
+
         // 根据state处理不同的监听状态
         switch (message.getState()) {
             case ListenState.Start:

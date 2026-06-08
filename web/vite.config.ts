@@ -10,6 +10,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
 
   return {
+    base: '/xz/',
     plugins: [
       vue(),
       vueDevTools(),
@@ -22,6 +23,7 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 8084,
       host: '0.0.0.0',
+      allowedHosts: ['xz.caringfamily.cn', 'x.caringfamily.cn'],
       proxy: {
         '/api': {
           target: process.env.API_URL || env.VITE_BACKEND_URL || 'http://localhost:8091',

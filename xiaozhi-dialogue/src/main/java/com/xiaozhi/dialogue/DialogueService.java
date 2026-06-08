@@ -235,17 +235,23 @@ public class DialogueService{
 
             String text = sttResult.text();
 
-            UserMessage userMessage = buildUserMessage(text, sttResult);
-
             // 意图检测
             if (intentService.detect(text) == IntentService.Intent.EXIT) {
                 sendGoodbyeMessage(session);
                 return;
             }
 
+            // 如果有卦象信息，加入到识别结果中交给LLM处理
+            String guaxiang = session.getGuaxiang();
+            if (guaxiang != null && !guaxiang.isEmpty()) {
+                text = "卦象是:" + guaxiang + ". " + text;
+            }
+
+            UserMessage userMessage = buildUserMessage(text, sttResult);
+
             // LLM+TTS
             try {
-                persona.chat(userMessage, true);
+                persona.chat(userMessage, false);
             } catch (Exception e) {
                 log.error("LLM对话处理失败: {}", e.getMessage(), e);
             }

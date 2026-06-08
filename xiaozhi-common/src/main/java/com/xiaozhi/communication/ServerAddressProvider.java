@@ -40,17 +40,18 @@ public class ServerAddressProvider {
     private void initializeAddresses() {
         if (domain != null && !domain.isEmpty()) {
             udpAddress = "udp." + domain;
-            websocketAddress = "wss://ws." + domain + WS_PATH;
+            // 配置了域名时，使用 HTTPS/WSS 协议（Higress 反向代理场景）
+            websocketAddress = "wss://" + domain + WS_PATH;
             mcpAddress = "wss://mcp." + domain + "/ws/mcp/";
             otaAddress = "https://" + domain + "/api/device/ota";
-            serverAddress = "https://" + domain;
+            serverAddress = "https://" + domain + "/xz/";
         } else {
             String serverIp = cmsUtils.getServerIp();
             udpAddress = serverIp;
             websocketAddress = "ws://" + serverIp + ":" + dialoguePort + WS_PATH;
             mcpAddress = "ws://" + serverIp + ":" + dialoguePort + "/ws/mcp/";
             otaAddress = "http://" + serverIp + ":" + serverPort + "/api/device/ota";
-            serverAddress = "http://" + serverIp + ":" + serverPort;
+            serverAddress = "http://" + serverIp + ":" + serverPort + "/xz/";
         }
     }
 

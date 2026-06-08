@@ -124,7 +124,7 @@ public class DeviceController extends BaseController {
     @ResponseBody
     @Operation(summary = "处理OTA请求", description = "返回OTA结果")
     public ResponseEntity<byte[]> ota(
-        @Parameter(description = "设备ID") @RequestHeader(value = "Device-Id", required = false) String deviceIdHeader,
+        @Parameter(description = "设备ID") @RequestHeader(value = "x-dubbo-device-id") String deviceIdHeader,
         @RequestBody(required = false) String requestBody,
         HttpServletRequest request) {
         try {
@@ -144,15 +144,15 @@ public class DeviceController extends BaseController {
     @ResponseBody
     @Operation(summary = "查询OTA激活状态", description = "返回OTA激活状态")
     public ResponseEntity<String> otaActivate(
-        @Parameter(name = "Device-Id", description = "设备唯一标识", in = ParameterIn.HEADER)
-        @RequestHeader(value = "Device-Id", required = false) String deviceId) {
+        @Parameter(name = "x-dubbo-device-id", description = "设备唯一标识", in = ParameterIn.HEADER)
+        @RequestHeader(value = "x-dubbo-device-id", required = false) String deviceId) {
         try {
             return deviceAppService.checkOtaActivation(deviceId)
                     ? ResponseEntity.ok("success")
-                    : ResponseEntity.status(202).build();
+                    : ResponseEntity.status(403).build();
         } catch (RuntimeException e) {
             log.error("OTA激活失败", e);
-            return ResponseEntity.status(202).build();
+            return ResponseEntity.status(403).build();
         }
     }
 

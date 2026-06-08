@@ -26,4 +26,7 @@ sms:
 
 xiaozhi:
   server:
-    domain: connectai.chat
+    domain: xz.caringfamily.cn
+
+conversation:
+  max-messages: 0

@@ -208,7 +208,7 @@ public class DeviceAppService {
             }
         }
 
-        if (!StringUtils.hasText(req.getDeviceId()) || !CommonUtils.isMacAddressValid(req.getDeviceId())) {
+        if (!StringUtils.hasText(req.getDeviceId())) {
             throw new IllegalArgumentException("设备ID不正确");
         }
 
@@ -227,16 +227,22 @@ public class DeviceAppService {
         ));
 
         if (boundDevice == null) {
-            // --- 未绑定设备：生成验证码 ---
-            DeviceResp codeResult = generateCode(deviceId, null, req.getType());
-            if (codeResult == null || !StringUtils.hasText(codeResult.getCode())) {
-                throw new IllegalStateException("生成验证码失败");
+            log.info("mTLS 设备未绑定，自动注册：deviceId={}, ip={}", deviceId, req.getIp());
+
+            RoleBO selectedRole = roleService.getDefaultOrFirstBO(1);
+            if (selectedRole == null) {
+                throw new IllegalStateException("没有配置角色");
             }
-            otaResponse.put("activation", Map.of(
-                "code", codeResult.getCode(),
-                "message", codeResult.getCode(),
-                "challenge", deviceId
-            ));
+
+            String name = "bg";
+            Device device = Device.newDevice(req.getDeviceId(), name, req.getType(),
+                    1, selectedRole.getRoleId());
+            deviceRepository.save(device);
+
+            boundDevice = deviceService.get(device.getDeviceId());
+        }
+        if (boundDevice == null) {
+            throw new IllegalStateException("添加设备失败");
         } else {
             // --- 已绑定设备：返回通信地址 ---
             DialogueServerInfo selectedServer = null;

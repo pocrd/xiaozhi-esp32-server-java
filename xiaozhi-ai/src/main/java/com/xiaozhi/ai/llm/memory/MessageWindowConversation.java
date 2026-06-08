@@ -26,9 +26,14 @@ public class MessageWindowConversation extends Conversation {
         super(ownerId, roleId, sessionId, roleDesc, userId);
         this.maxMessages = maxMessages;
 
-        List<Message> history = sessionScoped
-                ? chatMemory.find(sessionId, maxMessages)
-                : chatMemory.find(ownerId, roleId, maxMessages);
+        List<Message> history = null;
+        if (maxMessages > 0) {
+            history = sessionScoped
+                    ? chatMemory.find(sessionId, maxMessages)
+                    : chatMemory.find(ownerId, roleId, maxMessages);
+        } else {
+            history = Collections.emptyList();
+        }
         log.info("加载对话历史: sessionScoped={}, ownerId={}, sessionId={}, size={}",
                 sessionScoped, ownerId, sessionId, history.size());
         super.messages.addAll(history);
@@ -37,6 +42,9 @@ public class MessageWindowConversation extends Conversation {
     @Override
     public synchronized void add(Message message) {
         if (message instanceof UserMessage || message instanceof AssistantMessage || message instanceof ToolResponseMessage) {
+            if (maxMessages <= 0 && message instanceof UserMessage) {
+                messages.clear();
+            }
             messages.add(message);
         } else {
             log.warn("不支持的消息类型：{}",message.getClass().getName());

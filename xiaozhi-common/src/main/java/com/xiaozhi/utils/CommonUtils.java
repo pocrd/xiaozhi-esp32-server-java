@@ -21,6 +21,10 @@ public class CommonUtils {
      * 判断 MAC 地址是否合法（格式正确且为单播地址）
      */
     public static boolean isMacAddressValid(String mac) {
+        // 首先检查是否为 null
+        if (mac == null) {
+            return false;
+        }
         if (!MAC_PATTERN.matcher(mac).matches()) {
             return false;
         }

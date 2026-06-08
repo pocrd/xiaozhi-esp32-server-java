@@ -8,7 +8,7 @@ import lombok.Data;
 @Data
 public class OtaReq {
 
-    /** 设备ID（MAC 地址） */
+    /** 设备ID */
     private String deviceId;
 
     /** 芯片型号 */

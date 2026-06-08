@@ -39,6 +39,8 @@ public abstract class ChatSession {
      */
     protected DeviceBO device;
 
+    protected String guaxiang;
+
     /**
      * 对话上下文，承载与对话逻辑直接相关的状态（Persona、Player、工具回调等）。
      * 内部实现细节，外部通过本类的直通方法访问。
@@ -100,6 +102,9 @@ public abstract class ChatSession {
 
     public Path getUserAudioPath()              { return dialogueContext.getUserAudioPath(); }
     public void setUserAudioPath(Path path)     { dialogueContext.setUserAudioPath(path); }
+
+    public String getGuaxiang()                 { return guaxiang; }
+    public void setGuaxiang(String guaxiang)    { this.guaxiang = guaxiang; }
 
     public ToolsSessionHolder getToolsSessionHolder()                          { return dialogueContext.getToolsSessionHolder(); }
     public void setToolsSessionHolder(ToolsSessionHolder h)                    { dialogueContext.setToolsSessionHolder(h); }

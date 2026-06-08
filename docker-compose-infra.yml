@@ -1,37 +1,4 @@
 services:
-  mysql:
-    build:
-      context: .
-      dockerfile: Dockerfile-mysql
-    container_name: mysql
-    restart: always
-    ports:
-      - "3306:3306"  # 本地通过 3306 访问 MySQL
-    environment:
-      # 这些变量与 Dockerfile-mysql 中的 ENV 保持一致，仅作显式声明
-      MYSQL_ROOT_PASSWORD: abc123456
-      MYSQL_DATABASE: xiaozhi
-      MYSQL_USER: xiaozhi
-      MYSQL_PASSWORD: 123456
-    volumes:
-      - mysql_data:/var/lib/mysql   # 持久化数据
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "xiaozhi", "-p123456"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    networks:
-      - infra
-      - xiaozhi-network
-    deploy:
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 1G
-        reservations:
-          cpus: '0.5'
-          memory: 256M
 
   redis:
     image: redis:7-alpine
@@ -68,5 +35,4 @@ networks:
     name: xiaozhi-network
 
 volumes:
-  mysql_data:
   redis_data:
