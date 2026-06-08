@@ -56,6 +56,8 @@ services:
         - eclipse-temurin:21-jre
     ports:
       - "8092:8092"
+    volumes:
+      - ./models:/models
     networks:
       - app-network
     environment:
