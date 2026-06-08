@@ -18,7 +18,7 @@ services:
       target: server
       args:
         - VOSK_MODEL_SIZE=${VOSK_MODEL_SIZE:-small}
-        - TTS_MODEL=${TTS_MODEL:none}
+        - TTS_MODEL=${TTS_MODEL:-vits-melo-tts-zh_en}
         - DOWNLOAD_PROXY=${BUILD_PROXY:-}
       # 添加构建缓存设置
       cache_from:
@@ -50,7 +50,7 @@ services:
       target: dialogue
       args:
         - VOSK_MODEL_SIZE=${VOSK_MODEL_SIZE:-small}
-        - TTS_MODEL=${TTS_MODEL:none}
+        - TTS_MODEL=${TTS_MODEL:-vits-melo-tts-zh_en}
         - DOWNLOAD_PROXY=${BUILD_PROXY:-}
       cache_from:
         - eclipse-temurin:21-jre
