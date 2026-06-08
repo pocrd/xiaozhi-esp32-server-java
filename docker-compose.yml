@@ -57,7 +57,7 @@ services:
     ports:
       - "8092:8092"
     volumes:
-      - ./models:/models
+      - ./models:/app/models
     networks:
       - app-network
     environment:
