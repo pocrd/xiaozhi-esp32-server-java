@@ -5,7 +5,7 @@ FROM eclipse-temurin:21-jdk AS builder
 # Vosk模型大小: small(~50MB) 或 standard(~1.3GB)
 ARG VOSK_MODEL_SIZE=small
 # TTS本地模型，默认 vits-melo-tts-zh_en（中英文），设为 none 则不下载
-ARG TTS_MODEL=
+ARG TTS_MODEL=none
 # 模型下载代理（仅用于 curl，不影响 apt-get）
 ARG DOWNLOAD_PROXY=
 
