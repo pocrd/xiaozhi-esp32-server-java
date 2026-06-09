@@ -86,6 +86,7 @@ public class OpenAiModelProvider implements ChatModelProvider {
                 .temperature(temperature)
                 .topP(topP)
                 .maxCompletionTokens(2000)
+                .extraBody(java.util.Map.of("enable_thinking", false))
                 .streamUsage(true);
 
         if (enableThinking) {

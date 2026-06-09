@@ -242,7 +242,7 @@ public class Persona {
      */
     public void sendGoodbyeMessage() {
         ChatSession session = getSession();
-        if (session == null || !session.isAudioChannelOpen()){
+        if (session == null || !session.isAudioChannelOpen() || !session.isOpen()){
             return ;
         }
         // 告别语不需要保存opus音频文件，重置时间戳防止复用上一轮对话的值
