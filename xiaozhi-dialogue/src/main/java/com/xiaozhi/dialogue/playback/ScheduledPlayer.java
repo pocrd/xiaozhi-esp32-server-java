@@ -281,7 +281,6 @@ public class ScheduledPlayer extends Player {
         if (StringUtils.hasText(text)) {
             //String mood = speech.getMood();
             //sendEmotion(StringUtils.hasText(mood) ? mood : EmojiUtils.getRandomEmotion());
-            log.info("Sending text: {}", text);
             sendSentenceStart(text);
         }
 

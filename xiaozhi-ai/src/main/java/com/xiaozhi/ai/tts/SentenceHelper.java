@@ -40,10 +40,10 @@ public class SentenceHelper implements ChatConverter {
     private static final Pattern NUMBER_PATTERN = Pattern.compile("\\d+\\.\\d+");
 
     // 最小句子长度（字符数）
-    private static final int MIN_SENTENCE_LENGTH = 240;
+    private static final int MIN_SENTENCE_LENGTH = 256;
 
     // 上下文缓冲区最大长度（用于数字小数点检测等上下文判断）
-    private static final int CONTEXT_BUFFER_MAX_LENGTH = 1000;
+    private static final int CONTEXT_BUFFER_MAX_LENGTH = 1024;
 
     private final StringBuilder currentSentence = new StringBuilder();
     private final StringBuilder contextBuffer = new StringBuilder();
