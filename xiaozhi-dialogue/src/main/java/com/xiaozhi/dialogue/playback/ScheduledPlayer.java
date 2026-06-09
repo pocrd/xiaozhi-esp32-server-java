@@ -90,6 +90,7 @@ public class ScheduledPlayer extends Player {
                 // 启动发送线程（只启动一次）
                 if (!running) {
                     running = true;
+                    log.info("Starting sender thread...");
                     sendStart();
 
                     // 使用虚拟线程，轻量级，可以创建成千上万个
@@ -278,8 +279,9 @@ public class ScheduledPlayer extends Player {
         // 发送文本和表情（如果有）
         String text = speech.getText();
         if (StringUtils.hasText(text)) {
-            String mood = speech.getMood();
-            sendEmotion(StringUtils.hasText(mood) ? mood : EmojiUtils.getRandomEmotion());
+            //String mood = speech.getMood();
+            //sendEmotion(StringUtils.hasText(mood) ? mood : EmojiUtils.getRandomEmotion());
+            log.info("Sending text: {}", text);
             sendSentenceStart(text);
         }
 
