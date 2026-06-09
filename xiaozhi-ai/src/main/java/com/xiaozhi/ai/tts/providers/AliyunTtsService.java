@@ -35,7 +35,7 @@ public class AliyunTtsService implements TtsService {
     private static final String PROVIDER_NAME = "aliyun";
     private static final int MAX_RETRY_ATTEMPTS = 3;
     private static final long RETRY_DELAY_MS = 1000;
-    private static final long TTS_TIMEOUT_SECONDS = 5;
+    private static final long TTS_TIMEOUT_SECONDS = 15;
 
     private static final ExecutorService sharedExecutor = new ThreadPoolExecutor(
             0, 20, 60L, TimeUnit.SECONDS,
