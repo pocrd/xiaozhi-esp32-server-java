@@ -84,6 +84,7 @@ public class AliyunSttService implements SttService {
         // 收集每个 isSentenceEnd=true 的句子结果
         var recognition = Flux.<SttResult>create(sink -> {
             try {
+                log.info("开始使用{}模型进行语音识别", modelName);
                 recognizer.streamCall(param, Flowable.create(emitter -> {
                             audioSink.subscribe(
                                     chunk -> emitter.onNext(ByteBuffer.wrap(chunk)),

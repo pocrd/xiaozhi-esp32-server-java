@@ -56,22 +56,22 @@ public class MessageWindowConversation extends Conversation {
      */
     public synchronized List<Message> messages(ConversationContext context) {
         // 按对话组裁剪：简单组=[User,Assistant](2条)，工具组=[User,Assistant(toolCall),Tool,Assistant(final)](4条)
-        while (messages.size() > maxMessages + 1) {
-            if (messages.size() >= 2 && messages.get(1) instanceof AssistantMessage am
-                    && am.getToolCalls() != null && !am.getToolCalls().isEmpty()
-                    && messages.size() >= 4) {
-                // 工具对话组：移除 4 条 [User, Assistant(toolCall), Tool, Assistant(final)]
-                for (int i = 0; i < 4 && !messages.isEmpty(); i++) {
-                    messages.remove(0);
-                }
-            } else {
-                // 简单对话组：移除 2 条 [User, Assistant]
-                messages.remove(0);
-                if (!messages.isEmpty()) {
-                    messages.remove(0);
-                }
-            }
-        }
+        // while (messages.size() > maxMessages + 1) {
+        //     if (messages.size() >= 2 && messages.get(1) instanceof AssistantMessage am
+        //             && am.getToolCalls() != null && !am.getToolCalls().isEmpty()
+        //             && messages.size() >= 4) {
+        //         // 工具对话组：移除 4 条 [User, Assistant(toolCall), Tool, Assistant(final)]
+        //         for (int i = 0; i < 4 && !messages.isEmpty(); i++) {
+        //             messages.remove(0);
+        //         }
+        //     } else {
+        //         // 简单对话组：移除 2 条 [User, Assistant]
+        //         messages.remove(0);
+        //         if (!messages.isEmpty()) {
+        //             messages.remove(0);
+        //         }
+        //     }
+        // }
         // 新消息列表对象，避免使用过程中污染原始列表对象
         List<Message> historyMessages = new ArrayList<>();
         var roleSystemMessage = roleSystemMessage(context);
