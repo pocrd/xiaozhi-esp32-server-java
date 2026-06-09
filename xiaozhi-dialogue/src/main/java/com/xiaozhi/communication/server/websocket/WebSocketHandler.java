@@ -92,6 +92,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
     @Override
     protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
         String sessionId = session.getId();
+        log.info(">>>>>binary msg:"+message.getPayloadLength());
         ChatSession chatSession = sessionManager.getSession(sessionId);
         if (chatSession == null || chatSession.getDevice() == null) {
             return;
