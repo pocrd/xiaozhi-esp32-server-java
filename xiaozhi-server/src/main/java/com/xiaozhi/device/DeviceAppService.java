@@ -234,7 +234,7 @@ public class DeviceAppService {
                 throw new IllegalStateException("没有配置角色");
             }
 
-            String name = "bg";
+            String name = req.getDeviceId();
             Device device = Device.newDevice(req.getDeviceId(), name, req.getType(),
                     1, selectedRole.getRoleId());
             deviceRepository.save(device);
