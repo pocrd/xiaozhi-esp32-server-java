@@ -1,14 +1,15 @@
 package com.xiaozhi.storage.service;
 
+import org.springframework.stereotype.Component;
+
 import com.xiaozhi.common.model.bo.ConfigBO;
 import com.xiaozhi.config.service.ConfigService;
 import com.xiaozhi.storage.service.impl.AliyunOssStorageService;
 import com.xiaozhi.storage.service.impl.LocalStorageService;
 import com.xiaozhi.storage.service.impl.TencentCosStorageService;
+
 import jakarta.annotation.PreDestroy;
 import jakarta.annotation.Resource;
-import org.springframework.stereotype.Component;
-
 import lombok.extern.slf4j.Slf4j;
 /**
  * 存储服务工厂。
@@ -66,6 +67,7 @@ public class StorageServiceFactory {
      * 根据配置创建对应的存储服务
      */
     public StorageService createStorageService(ConfigBO config) {
+        log.info("创建存储服务: {}, [{}]", config.getProvider(), config.getAk());
         return switch (config.getProvider()) {
             case "tencent" -> new TencentCosStorageService(config);
             case "aliyun" -> new AliyunOssStorageService(config);
