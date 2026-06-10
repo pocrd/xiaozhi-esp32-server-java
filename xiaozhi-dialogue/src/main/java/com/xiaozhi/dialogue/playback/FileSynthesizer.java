@@ -1,18 +1,17 @@
 package com.xiaozhi.dialogue.playback;
 
-import com.xiaozhi.common.Speech;
-
-import com.xiaozhi.communication.common.ChatSession;
-import com.xiaozhi.ai.tts.SentenceHelper;
-import com.xiaozhi.ai.tts.TtsService;
-import com.xiaozhi.utils.AudioUtils;
-import reactor.core.Disposable;
-import reactor.core.publisher.Flux;
-
 import java.nio.file.Path;
 import java.util.List;
 
+import com.xiaozhi.ai.tts.SentenceHelper;
+import com.xiaozhi.ai.tts.TtsService;
+import com.xiaozhi.common.Speech;
+import com.xiaozhi.communication.common.ChatSession;
+import com.xiaozhi.utils.AudioUtils;
+
 import lombok.extern.slf4j.Slf4j;
+import reactor.core.Disposable;
+import reactor.core.publisher.Flux;
 /**
  * 语音合成器，用于非流式TTS（先生成完整音频文件再播放）。
  * 适用于不支持流式输出的TTS Provider（如 SherpaOnnx）。
@@ -54,6 +53,7 @@ public class FileSynthesizer extends Synthesizer {
             String mood = result.mood();
             Flux<Speech> lazyTtsFlux = Flux.create(sink -> {
                 try {
+                    log.info("TTS输入文本长度: {}, 内容: {}", text.length(), text);
                     Path audioPath = ttsService.textToSpeech(text);
                     if (audioPath != null) {
                         List<byte[]> chunks = AudioUtils.readAsPcmChunks(audioPath.toString());

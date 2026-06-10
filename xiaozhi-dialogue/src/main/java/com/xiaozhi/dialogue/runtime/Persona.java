@@ -1,16 +1,11 @@
 package com.xiaozhi.dialogue.runtime;
 
-import com.xiaozhi.common.model.ChatToken;
-import com.xiaozhi.communication.common.ChatSession;
-import com.xiaozhi.communication.common.SessionManager;
-import com.xiaozhi.ai.llm.memory.Conversation;
-import com.xiaozhi.ai.llm.memory.ConversationContext;
-import com.xiaozhi.dialogue.playback.Player;
-import com.xiaozhi.dialogue.playback.Synthesizer;
-import com.xiaozhi.ai.stt.SttService;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.Setter;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
+
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
@@ -23,15 +18,21 @@ import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.tool.ToolCallback;
-import reactor.core.publisher.Flux;
 
-import java.nio.file.Path;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
+import com.xiaozhi.ai.llm.memory.Conversation;
+import com.xiaozhi.ai.llm.memory.ConversationContext;
+import com.xiaozhi.ai.stt.SttService;
+import com.xiaozhi.common.model.ChatToken;
+import com.xiaozhi.communication.common.ChatSession;
+import com.xiaozhi.communication.common.SessionManager;
+import com.xiaozhi.dialogue.playback.Player;
+import com.xiaozhi.dialogue.playback.Synthesizer;
 
+import lombok.Builder;
+import lombok.Getter;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import reactor.core.publisher.Flux;
 /**
  * 人物角色、虚拟形象，描述角色的属性和行为。Domain Entity: CharacterRole(聊天角色,Persona)，管理对话历史记录，管理对话工具调用等。
  * 聚合着ChatModel、TTS(Synthersizer)、Player
@@ -116,6 +117,7 @@ public class Persona {
      * @param useFunctionCall 是否使用函数调用
      */
     private Flux<ChatResponse> chatStream(Instant now, UserMessage userMessage, boolean useFunctionCall) {
+        long startTime = System.currentTimeMillis();
         // userSpeechPath 从 session 中获取，避免参数层层穿透
         Path userSpeechPath = getSession().getUserAudioPath();
 
@@ -148,7 +150,17 @@ public class Persona {
         List<Message> messages = conversation.messages(ctx);
         Prompt prompt = new Prompt(messages, chatOptions);
 
+        // 打印 LLM 请求详细信息
+        logLLMRequest(prompt, effectiveTools, startTime);
+
         Flux<ChatResponse> chatFlux = chatModel.stream(prompt)
+            .doOnSubscribe(subscription -> {
+                log.info("[LLM] 开始调用大模型 - SessionId: {}, Model: {}, 消息数: {}, 工具数: {}",
+                        sessionId,
+                        chatModel.getClass().getSimpleName(),
+                        messages.size(),
+                        effectiveTools.size());
+            })
             .doOnError(error -> {
                 listener.onError(error);
             });
@@ -193,6 +205,9 @@ public class Persona {
             }
             // 不能再从 ChatResponse 里取 AssistantMessage，因为已注入时间戳
             conversation.add(dialogueTurn.getAssistantMessage());
+
+            // 打印 LLM 响应和工具调用信息
+            logLLMResponse(dialogueTurn, startTime);
         });
     }
 
@@ -275,10 +290,10 @@ public class Persona {
      * 将 ChatResponse 流转换为 ChatToken 流，包含思考内容和正式回复。
      * <p>
      * Spring AI 1.1.0+ 中，启用 reasoningEffort 后，推理内容通过
-     * {@code AssistantMessage.getProperties().get("reasoningContent")} 返回。
      */
     private Flux<ChatToken> convert(Flux<ChatResponse> chatResponseFlux) {
-        return chatResponseFlux.mapNotNull(ChatResponse::getResult)
+        return chatResponseFlux
+                .mapNotNull(ChatResponse::getResult)
                 .mapNotNull(Generation::getOutput)
                 .flatMap(message -> {
                     List<ChatToken> tokens = new ArrayList<>();
@@ -292,5 +307,114 @@ public class Persona {
                     }
                     return Flux.fromIterable(tokens);
                 });
+    }
+
+    /**
+     * 打印 LLM 请求详细信息
+     */
+    private void logLLMRequest(Prompt prompt, List<ToolCallback> tools, long startTime) {
+        try {
+            StringBuilder logBuilder = new StringBuilder();
+            logBuilder.append("\n========== LLM 请求详情 ==========");
+            logBuilder.append("\n[SessionId]: ").append(sessionId);
+            logBuilder.append("\n[消息总数]: ").append(prompt.getInstructions().size());
+            logBuilder.append("\n[工具数量]: ").append(tools.size());
+            
+            // 打印系统提示词
+            prompt.getInstructions().stream()
+                    .filter(msg -> msg.getMessageType() == org.springframework.ai.chat.messages.MessageType.SYSTEM)
+                    .findFirst()
+                    .ifPresent(systemMsg -> {
+                        logBuilder.append("\n[System Prompt]:\n").append(systemMsg.getText());
+                    });
+            
+            // 打印用户消息
+            prompt.getInstructions().stream()
+                    .filter(msg -> msg.getMessageType() == org.springframework.ai.chat.messages.MessageType.USER)
+                    .forEach(userMsg -> {
+                        logBuilder.append("\n[User Message]: ").append(userMsg.getText());
+                    });
+            
+            // 打印工具列表（包括 MCP 工具）
+            if (!tools.isEmpty()) {
+                logBuilder.append("\n[可用工具]:");
+                tools.forEach(tool -> {
+                    var definition = tool.getToolDefinition();
+                    logBuilder.append("\n  - ").append(definition.name())
+                            .append(": ").append(definition.description());
+                });
+            }
+            
+            logBuilder.append("\n====================================\n");
+            log.info(logBuilder.toString());
+        } catch (Exception e) {
+            log.warn("记录 LLM 请求日志失败", e);
+        }
+    }
+
+    /**
+     * 打印 LLM 响应和工具调用信息
+     */
+    private void logLLMResponse(DialogueTurn turn, long startTime) {
+        try {
+            long totalDuration = System.currentTimeMillis() - startTime;
+            StringBuilder logBuilder = new StringBuilder();
+            logBuilder.append("\n========== LLM 响应详情 ==========");
+            logBuilder.append("\n[SessionId]: ").append(sessionId);
+            logBuilder.append("\n[总耗时]: ").append(totalDuration).append("ms");
+            
+            // 打印助手回复
+            AssistantMessage assistantMsg = turn.getAssistantMessage();
+            if (assistantMsg != null) {
+                String text = assistantMsg.getText();
+                if (text != null && !text.isEmpty()) {
+                    // 限制日志长度，避免过长
+                    String preview = text.length() > 500 ? text.substring(0, 500) + "..." : text;
+                    logBuilder.append("\n[Assistant Response]:\n").append(preview);
+                }
+            }
+            
+            // 打印工具调用详情
+            var toolCallDetails = turn.getToolCallDetails();
+            if (toolCallDetails != null && !toolCallDetails.isEmpty()) {
+                logBuilder.append("\n[工具调用次数]: ").append(toolCallDetails.size());
+                toolCallDetails.forEach(detail -> {
+                    logBuilder.append("\n  - 工具: ").append(detail.name())
+                            .append(", 参数: ").append(detail.arguments());
+                });
+            }
+            
+            // 打印工具调用链（MCP 工具调用及返回）
+            var toolChains = turn.getToolChains();
+            if (toolChains != null && !toolChains.isEmpty()) {
+                logBuilder.append("\n[工具调用链]:").append(toolChains.size());
+                toolChains.forEach(chain -> {
+                    AssistantMessage callMsg = chain.toolCallMessage();
+                    ToolResponseMessage responseMsg = chain.toolResponseMessage();
+                    
+                    if (callMsg != null && callMsg.getToolCalls() != null) {
+                        callMsg.getToolCalls().forEach(toolCall -> {
+                            logBuilder.append("\n  [调用] 工具: ").append(toolCall.name())
+                                    .append(", 参数: ").append(toolCall.arguments());
+                        });
+                    }
+                    
+                    if (responseMsg != null && responseMsg.getResponses() != null) {
+                        responseMsg.getResponses().forEach(response -> {
+                            String responseData = response.responseData();
+                            // MCP 响应内容完整记录，不限制长度
+                            logBuilder.append("\n  [返回] 工具: ").append(response.id())
+                                    .append(", 名称: ").append(response.name())
+                                    .append(", 结果:\n").append(responseData != null ? responseData : "null");
+                        });
+                    }
+                });
+            }
+            
+            logBuilder.append("\n====================================\n");
+            log.info(logBuilder.toString());
+        } catch (Exception e) {
+            log.warn("记录 LLM 响应日志失败", e);
+        }
     }
 }
