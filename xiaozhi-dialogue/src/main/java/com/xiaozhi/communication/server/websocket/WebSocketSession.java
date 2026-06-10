@@ -57,6 +57,9 @@ public class WebSocketSession extends ChatSession {
     @Override
     public void sendTextMessage(String message) {
         try {
+            if (!session.isOpen()) {
+                return;
+            }
             session.sendMessage(new TextMessage(message));
         } catch (IOException e) {
             log.error("发送Text消息失败, message: {}", message, e);
@@ -66,6 +69,9 @@ public class WebSocketSession extends ChatSession {
     @Override
     public void sendBinaryMessage(byte[] message) {
         try {
+            if (!session.isOpen()) {
+                return;
+            }
             session.sendMessage(new BinaryMessage(message));
         } catch (IOException e) {
             log.error("发送Binary消息失败", e);
