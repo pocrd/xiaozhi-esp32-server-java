@@ -1,14 +1,16 @@
 package com.xiaozhi.ai.tts;
 
-import com.xiaozhi.utils.EmojiUtils;
-import org.springframework.util.StringUtils;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxSink;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import org.springframework.util.StringUtils;
+
+import com.xiaozhi.utils.EmojiUtils;
+
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.FluxSink;
 
 /**
  * 句子处理帮助类，统一分句逻辑。
@@ -40,10 +42,10 @@ public class SentenceHelper implements ChatConverter {
     private static final Pattern NUMBER_PATTERN = Pattern.compile("\\d+\\.\\d+");
 
     // 最小句子长度（字符数）
-    private static final int MIN_SENTENCE_LENGTH = 256;
+    private static final int MIN_SENTENCE_LENGTH = 64;
 
     // 上下文缓冲区最大长度（用于数字小数点检测等上下文判断）
-    private static final int CONTEXT_BUFFER_MAX_LENGTH = 1024;
+    private static final int CONTEXT_BUFFER_MAX_LENGTH = 256;
 
     private final StringBuilder currentSentence = new StringBuilder();
     private final StringBuilder contextBuffer = new StringBuilder();
