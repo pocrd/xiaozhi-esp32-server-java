@@ -246,6 +246,7 @@ public class AliyunTtsService implements TtsService {
                         .model("qwen3-tts-instruct-flash")
                         .apiKey(apiKey)
                         .text(text)
+                        .parameter("volume", 80)
                         .languageType("Chinese")
                         .voice(voice)
                         .build();
