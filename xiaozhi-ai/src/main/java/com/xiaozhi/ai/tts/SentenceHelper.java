@@ -36,7 +36,7 @@ public class SentenceHelper implements ChatConverter {
     private static final Pattern SPECIAL_PATTERN = Pattern.compile("[：:\"]");
 
     // 换行符
-    private static final Pattern NEWLINE_PATTERN = Pattern.compile("[\n\r]");
+    private static final Pattern BLANK_PATTERN = Pattern.compile("[\n\r\t\f]");
 
     // 数字模式（用于检测小数点是否在数字中）
     private static final Pattern NUMBER_PATTERN = Pattern.compile("\\d+\\.\\d+");
@@ -49,6 +49,9 @@ public class SentenceHelper implements ChatConverter {
 
     private final StringBuilder currentSentence = new StringBuilder();
     private final StringBuilder contextBuffer = new StringBuilder();
+    
+    // 标记是否已发送过第一个句子
+    private boolean firstSentenceSent = false;
 
     public SentenceHelper() {
     }
@@ -66,7 +69,11 @@ public class SentenceHelper implements ChatConverter {
         for (int i = 0; i < token.length();) {
             int codePoint = token.codePointAt(i);
             String charStr = new String(Character.toChars(codePoint));
-
+            boolean isBlank = BLANK_PATTERN.matcher(charStr).find();
+            if (isBlank) {
+                i += Character.charCount(codePoint);
+                continue;
+            }
             contextBuffer.append(charStr);
             if (contextBuffer.length() > CONTEXT_BUFFER_MAX_LENGTH) {
                 contextBuffer.delete(0, contextBuffer.length() - CONTEXT_BUFFER_MAX_LENGTH);
@@ -77,7 +84,6 @@ public class SentenceHelper implements ChatConverter {
             boolean isEndMark = SENTENCE_END_PATTERN.matcher(charStr).find();
             boolean isPauseMark = PAUSE_PATTERN.matcher(charStr).find();
             boolean isSpecialMark = SPECIAL_PATTERN.matcher(charStr).find();
-            boolean isNewline = NEWLINE_PATTERN.matcher(charStr).find();
             boolean isEmoji = EmojiUtils.isEmoji(codePoint);
 
             boolean containsKaomoji = false;
@@ -94,14 +100,14 @@ public class SentenceHelper implements ChatConverter {
             }
 
             boolean shouldSendSentence = false;
-            if (isEndMark || isNewline) {
+            if (isEndMark) {
                 shouldSendSentence = true;
             } else if ((isPauseMark || isSpecialMark || isEmoji || containsKaomoji)
-                    && currentSentence.length() >= MIN_SENTENCE_LENGTH) {
+                    && currentSentence.length() >= getCurrentMinLength()) {
                 shouldSendSentence = true;
             }
 
-            if (shouldSendSentence && currentSentence.length() >= MIN_SENTENCE_LENGTH) {
+            if (shouldSendSentence && currentSentence.length() >= getCurrentMinLength()) {
                 String rawSentence = currentSentence.toString().trim();
                 List<String> moods = new ArrayList<>();
                 String cleanSentence = EmojiUtils.processSentence(rawSentence, moods);
@@ -109,6 +115,8 @@ public class SentenceHelper implements ChatConverter {
                     String mood = moods.isEmpty() ? null : moods.get(0);
                     sentences.add(new SentenceResult(cleanSentence, mood));
                     currentSentence.setLength(0);
+                    // 标记首个句子已发送，后续使用标准长度
+                    firstSentenceSent = true;
                 }
             }
 
@@ -155,10 +163,19 @@ public class SentenceHelper implements ChatConverter {
     }
 
     private boolean containsSubstantialContent(String text) {
-        if (text == null || text.trim().length() < MIN_SENTENCE_LENGTH) {
+        if (text == null || text.trim().length() < getCurrentMinLength()) {
             return false;
         }
         String stripped = text.replaceAll("[\\p{P}\\s]", "");
         return stripped.length() >= 2;
+    }
+    
+    /**
+     * 获取当前应使用的最小句子长度。
+     * 首个句子使用较短阈值（MIN_SENTENCE_LENGTH/2）以加快首句响应速度，
+     * 后续句子使用标准阈值（MIN_SENTENCE_LENGTH）以减少TTS调用次数。
+     */
+    private int getCurrentMinLength() {
+        return firstSentenceSent ? MIN_SENTENCE_LENGTH : MIN_SENTENCE_LENGTH / 2;
     }
 }
