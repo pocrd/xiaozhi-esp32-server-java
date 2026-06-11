@@ -117,7 +117,7 @@ public class Persona {
      * @param useFunctionCall 是否使用函数调用
      */
     private Flux<ChatResponse> chatStream(Instant now, UserMessage userMessage, boolean useFunctionCall) {
-        long startTime = System.currentTimeMillis();
+        //long startTime = System.currentTimeMillis();
         // userSpeechPath 从 session 中获取，避免参数层层穿透
         Path userSpeechPath = getSession().getUserAudioPath();
 
@@ -151,7 +151,7 @@ public class Persona {
         Prompt prompt = new Prompt(messages, chatOptions);
 
         // 打印 LLM 请求详细信息
-        logLLMRequest(prompt, effectiveTools, startTime);
+        //logLLMRequest(prompt, effectiveTools, startTime);
 
         Flux<ChatResponse> chatFlux = chatModel.stream(prompt)
             .doOnSubscribe(subscription -> {
@@ -207,7 +207,7 @@ public class Persona {
             conversation.add(dialogueTurn.getAssistantMessage());
 
             // 打印 LLM 响应和工具调用信息
-            logLLMResponse(dialogueTurn, startTime);
+            //logLLMResponse(dialogueTurn, startTime);
         });
     }
 

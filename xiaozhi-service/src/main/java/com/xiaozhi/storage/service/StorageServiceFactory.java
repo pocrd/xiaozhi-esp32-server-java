@@ -67,7 +67,7 @@ public class StorageServiceFactory {
      * 根据配置创建对应的存储服务
      */
     public StorageService createStorageService(ConfigBO config) {
-        log.info("创建存储服务: {}, [{}]", config.getProvider(), config.getAk());
+        log.info("创建存储服务: {}", config.getProvider());
         return switch (config.getProvider()) {
             case "tencent" -> new TencentCosStorageService(config);
             case "aliyun" -> new AliyunOssStorageService(config);

@@ -53,7 +53,7 @@ public class FileSynthesizer extends Synthesizer {
             String mood = result.mood();
             Flux<Speech> lazyTtsFlux = Flux.create(sink -> {
                 try {
-                    log.info("TTS输入文本长度: {}, 内容: {}", text.length(), text);
+                    log.info("TTS输入文本长度: {}", text.length());
                     Path audioPath = ttsService.textToSpeech(text);
                     if (audioPath != null) {
                         List<byte[]> chunks = AudioUtils.readAsPcmChunks(audioPath.toString());
