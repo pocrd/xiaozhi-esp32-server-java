@@ -174,10 +174,16 @@ public class Persona {
             }
         });
         return new MessageAggregator().aggregate(chatFlux, chatResponse -> {
-            var toolCallDetails = getSession().drainToolCallDetails();
+            ChatSession session = getSession();
+            if (session == null) {
+                log.warn("[LLM] Session已关闭或不存在，跳过对话处理 - SessionId: {}", sessionId);
+                return;
+            }
+            
+            var toolCallDetails = session.drainToolCallDetails();
             // 从 DialogueContext 中获取模型真实调用的工具调用链中间消息
-            AssistantMessage toolCallAssistantMsg = getSession().getDialogueContext().drainToolCallAssistantMessage();
-            ToolResponseMessage toolResponseMsg = getSession().getDialogueContext().drainToolResponseMessage();
+            AssistantMessage toolCallAssistantMsg = session.getDialogueContext().drainToolCallAssistantMessage();
+            ToolResponseMessage toolResponseMsg = session.getDialogueContext().drainToolResponseMessage();
 
             // 合并本轮所有 tool chain：模型真实调用链（顺序即持久化顺序）
             List<ToolChainPair> allChains = new ArrayList<>();

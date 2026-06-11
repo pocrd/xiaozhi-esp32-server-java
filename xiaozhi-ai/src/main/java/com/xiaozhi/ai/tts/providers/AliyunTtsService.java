@@ -1,5 +1,21 @@
 package com.xiaozhi.ai.tts.providers;
 
+import java.io.ByteArrayOutputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.nio.ByteBuffer;
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
 import com.alibaba.dashscope.aigc.multimodalconversation.AudioParameters;
 import com.alibaba.dashscope.aigc.multimodalconversation.MultiModalConversation;
 import com.alibaba.dashscope.aigc.multimodalconversation.MultiModalConversationParam;
@@ -12,22 +28,6 @@ import com.xiaozhi.ai.tts.XiaozhiTtsOptions;
 import com.xiaozhi.common.model.bo.ConfigBO;
 import com.xiaozhi.utils.AudioUtils;
 
-
-import java.io.ByteArrayOutputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URI;
-import java.nio.ByteBuffer;
-import java.nio.file.Path;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-import java.util.concurrent.SynchronousQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.HashMap;
-import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -243,7 +243,7 @@ public class AliyunTtsService implements TtsService {
                 AudioParameters.Voice voice = VOICE_MAP.get(actualVoiceName);
                 MultiModalConversationParam param = MultiModalConversationParam.builder()
                         // 非实时SDK（MultiModalConversation）只支持 qwen3-tts-flash，不能用 realtime 模型名
-                        .model("qwen3-tts-flash")
+                        .model("qwen3-tts-instruct-flash")
                         .apiKey(apiKey)
                         .text(text)
                         .languageType("Chinese")
