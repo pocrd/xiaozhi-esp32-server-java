@@ -1,10 +1,11 @@
 package com.xiaozhi.communication.server.websocket;
 
-import com.xiaozhi.communication.common.ChatSession;
+import java.io.IOException;
+
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.TextMessage;
 
-import java.io.IOException;
+import com.xiaozhi.communication.common.ChatSession;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -62,7 +63,9 @@ public class WebSocketSession extends ChatSession {
             }
             session.sendMessage(new TextMessage(message));
         } catch (IOException e) {
-            log.error("发送Text消息失败, message: {}", message, e);
+            if (message != null && !message.contains("\"state\":\"stop\"")) {
+                log.info("发送Text消息失败, message: {}", message, e);
+            }
         }
     }
 
