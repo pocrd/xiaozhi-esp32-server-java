@@ -7,6 +7,7 @@ import java.io.InputStream;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -188,7 +189,8 @@ public class AliyunTtsService implements TtsService {
             String voice = parts.length > 1 ? parts[1] : "";
 
             // 验证模型名称是否为有效的 CosyVoice 模型
-            if ("cosyvoice-v2".equals(model) || "cosyvoice-v3-flash".equals(model) || "cosyvoice-v3-plus".equals(model)) {
+            if ("cosyvoice-v2".equals(model) || "cosyvoice-v3-flash".equals(model) || "cosyvoice-v3-plus".equals(model) 
+                || "cosyvoice-v3.5-flash".equals(model) || "cosyvoice-v3.5-plus".equals(model)) {
                 return new String[]{model, voice};
             }
             // 如果模型名称无效，将整个字符串视为音色名
@@ -221,8 +223,10 @@ public class AliyunTtsService implements TtsService {
                 String actualVoiceName = parsed[1];
 
                 if (VOICE_MAP.get(actualVoiceName) != null) {
+                    log.info("使用qwen-{}模型进行语音合成", actualVoiceName);
                     return ttsQwen(text);
                 } else {
+                    log.info("使用cosyvoice-{}模型进行语音合成", actualVoiceName);
                     return ttsCosyvoice(text);
                 }
             }
@@ -367,6 +371,8 @@ public class AliyunTtsService implements TtsService {
                                 .voice(actualVoiceName)  // 使用解析出的音色名
                                 .speechRate(getSpeed().floatValue())
                                 .pitchRate(getPitch().floatValue())
+                                .volume(100)
+                                .languageHints(Arrays.asList("zh"))
                                 .format(com.alibaba.dashscope.audio.ttsv2.SpeechSynthesisAudioFormat.WAV_16000HZ_MONO_16BIT)
                                 .build();
 
