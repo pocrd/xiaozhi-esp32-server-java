@@ -7,6 +7,7 @@ import java.io.InputStream;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -367,6 +368,7 @@ public class AliyunTtsService implements TtsService {
                                 .speechRate(getSpeed().floatValue())
                                 .pitchRate(getPitch().floatValue())
                                 .volume(100)
+                                .languageHints(Arrays.asList("zh"))
                                 .format(com.alibaba.dashscope.audio.ttsv2.SpeechSynthesisAudioFormat.WAV_16000HZ_MONO_16BIT)
                                 .build();
 
