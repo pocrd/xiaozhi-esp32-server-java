@@ -7,7 +7,6 @@ import java.io.InputStream;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -218,15 +217,11 @@ public class AliyunTtsService implements TtsService {
             if (getVoiceName().contains("sambert")) {
                 return ttsSambert(text);
             } else {
-                // 解析千问音色参数
-                String[] parsed = parseQwenVoiceParam(getVoiceName());
-                String actualVoiceName = parsed[1];
+                log.info("使用{}模型进行语音合成", getVoiceName());
 
-                if (VOICE_MAP.get(actualVoiceName) != null) {
-                    log.info("使用qwen-{}模型进行语音合成", actualVoiceName);
+                if (getVoiceName().contains("qwen")) {
                     return ttsQwen(text);
                 } else {
-                    log.info("使用cosyvoice-{}模型进行语音合成", actualVoiceName);
                     return ttsCosyvoice(text);
                 }
             }
@@ -372,7 +367,6 @@ public class AliyunTtsService implements TtsService {
                                 .speechRate(getSpeed().floatValue())
                                 .pitchRate(getPitch().floatValue())
                                 .volume(100)
-                                .languageHints(Arrays.asList("zh"))
                                 .format(com.alibaba.dashscope.audio.ttsv2.SpeechSynthesisAudioFormat.WAV_16000HZ_MONO_16BIT)
                                 .build();
 
