@@ -53,6 +53,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
         // 握手头先给出版本，hello 到达后以其声明为准
         xiaoZhiSession.setProtocolVersion(resolveProtocolVersion(
                 parseVersion(session.getHandshakeHeaders().getFirst("Protocol-Version")), session.getId()));
+        session.getAttributes().put("deviceId", deviceIdAuth);
         messageHandler.afterConnection(xiaoZhiSession, deviceIdAuth);
         sessionManager.openAudioChannel(xiaoZhiSession.getSessionId(), deviceIdAuth);
 
@@ -118,9 +119,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         String sessionId = session.getId();
-        ChatSession chatSession = sessionManager.getSession(sessionId);
-        // 在清理会话之前先获取 deviceId，避免清理后获取不到
-        String deviceId = chatSession != null ? chatSession.getDeviceIdOrUnknown() : "unknown";
+        String deviceId = getDeviceIdFromSession(session);
         messageHandler.afterConnectionClosed(sessionId);
 
         log.info("WebSocket连接关闭 - SessionId: {}, DeviceId: {}, 状态: {}", sessionId, deviceId, status);
@@ -129,9 +128,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
         String sessionId = session.getId();
-        ChatSession chatSession = sessionManager.getSession(sessionId);
-        // 先获取 deviceId，避免后续清理后获取不到
-        String deviceId = chatSession != null ? chatSession.getDeviceIdOrUnknown() : "unknown";
+        String deviceId = getDeviceIdFromSession(session);
         // 检查是否是客户端正常关闭连接导致的异常
         if (isClientCloseRequest(exception)) {
             // 客户端主动关闭，记录为信息级别日志而非错误
@@ -232,6 +229,15 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    /**
+     * 从 Spring WebSocketSession 的 attributes 中获取 deviceId，
+     * 不依赖 ChatSession，避免会话被提前清理后取不到
+     */
+    private String getDeviceIdFromSession(WebSocketSession session) {
+        Object deviceId = session.getAttributes().get("deviceId");
+        return deviceId != null ? deviceId.toString() : "unknown";
     }
 
     private Map<String, String> getHeadersFromSession(WebSocketSession session) {

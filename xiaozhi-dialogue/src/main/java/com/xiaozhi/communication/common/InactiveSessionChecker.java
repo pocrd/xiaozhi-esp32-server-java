@@ -1,18 +1,18 @@
 package com.xiaozhi.communication.common;
 
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
-import jakarta.annotation.Resource;
-import org.springframework.stereotype.Component;
-
-import com.xiaozhi.enums.DeviceState;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import org.springframework.stereotype.Component;
+
+import com.xiaozhi.enums.DeviceState;
+
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 /**
  * 不活跃会话检查器，定期检查并关闭超时未活动的会话。

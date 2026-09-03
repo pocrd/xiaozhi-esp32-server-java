@@ -1,11 +1,11 @@
 package com.xiaozhi.dialogue.runtime;
 
-import org.springframework.stereotype.Component;
-
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 import java.util.function.Supplier;
+
+import org.springframework.stereotype.Component;
 
 /**
  * Goodbye时，是否需要一些上下文信息？
