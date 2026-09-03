@@ -1,17 +1,5 @@
 package com.xiaozhi.dialogue.runtime;
 
-import com.xiaozhi.ai.llm.memory.Conversation;
-import com.xiaozhi.ai.llm.memory.ConversationContext;
-import com.xiaozhi.ai.llm.memory.MessageTimeMetadata;
-import com.xiaozhi.ai.stt.SttService;
-import com.xiaozhi.ai.tts.SpeechTokenFilter;
-import com.xiaozhi.common.model.ChatToken;
-import com.xiaozhi.communication.common.ChatSession;
-import com.xiaozhi.communication.common.SessionManager;
-import com.xiaozhi.dialogue.playback.Player;
-import com.xiaozhi.dialogue.playback.Synthesizer;
-import com.xiaozhi.utils.EmojiUtils;
-
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -35,6 +23,18 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.util.StringUtils;
+
+import com.xiaozhi.ai.llm.memory.Conversation;
+import com.xiaozhi.ai.llm.memory.ConversationContext;
+import com.xiaozhi.ai.llm.memory.MessageTimeMetadata;
+import com.xiaozhi.ai.stt.SttService;
+import com.xiaozhi.ai.tts.SpeechTokenFilter;
+import com.xiaozhi.common.model.ChatToken;
+import com.xiaozhi.communication.common.ChatSession;
+import com.xiaozhi.communication.common.SessionManager;
+import com.xiaozhi.dialogue.playback.Player;
+import com.xiaozhi.dialogue.playback.Synthesizer;
+import com.xiaozhi.utils.EmojiUtils;
 
 import lombok.Builder;
 import lombok.Getter;
@@ -565,9 +565,9 @@ public class Persona {
             String goodbyeMessage = goodbyeMessages.get();
 
             // 直接处理告别语，不通过LLM
-            synthesizer.synthesize(goodbyeMessage);
-        }else{
-            chat("我有事先忙了，再见！",false);
+            if (goodbyeMessage != null) {
+                synthesizer.synthesize(goodbyeMessage);
+            }
         }
 
     }

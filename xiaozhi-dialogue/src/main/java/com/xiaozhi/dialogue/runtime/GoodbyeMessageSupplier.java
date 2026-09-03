@@ -14,6 +14,9 @@ import java.util.function.Supplier;
 @Component
 public class GoodbyeMessageSupplier implements Supplier<String> {
 
+    /** 告别语总开关，设为 false 则不发送告别语音 */
+    public static final boolean ENABLED = false;
+
     private static final Random random = new Random();
 
     // 添加告别语列表
@@ -31,6 +34,9 @@ public class GoodbyeMessageSupplier implements Supplier<String> {
 
     @Override
     public String get() {
+        if (!ENABLED) {
+            return null;
+        }
         return goodbyeMessages.get(random.nextInt(goodbyeMessages.size()));
     }
 }
