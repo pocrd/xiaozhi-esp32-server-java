@@ -116,6 +116,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        String sessionId = session.getId();
         ChatSession chatSession = sessionManager.getSession(sessionId);
         messageHandler.afterConnectionClosed(sessionId);
 
