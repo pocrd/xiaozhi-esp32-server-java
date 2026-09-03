@@ -68,7 +68,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
 
         try {
             var msg = JsonUtil.fromJson(payload, Message.class);
-            log.info("收到消息 - SessionId: {}, DeviceId: {}, JsonNode: {}", sessionId, chatSession != null ? chatSession.getDeviceIdOrUnknown() : "unknown", message);
+            log.info("收到消息 - SessionId: {}, DeviceId: {}, JsonNode: {}", sessionId, chatSession != null ? chatSession.getDeviceIdOrUnknown() : "unknown", payload);
             if (Objects.requireNonNull(msg) instanceof HelloMessage m) {
                 handleHelloMessage(session, m);
             } else {
