@@ -218,7 +218,7 @@ public class AliyunTtsService implements TtsService {
             if (getVoiceName().contains("sambert")) {
                 return ttsSambert(text);
             } else {
-                log.info("使用{}模型进行语音合成", getVoiceName());
+                //log.info("使用{}模型进行语音合成", getVoiceName());
 
                 if (getVoiceName().contains("qwen")) {
                     return ttsQwen(text);

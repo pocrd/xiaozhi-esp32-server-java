@@ -205,7 +205,7 @@ public class VadService {
                 state.reset();
             }
             state.autoSegment = autoSegment;
-            log.info("VAD会话已初始化: {}, 自动断句: {}", sessionId, autoSegment);
+            //log.info("VAD会话已初始化: {}, 自动断句: {}", sessionId, autoSegment);
         }
     }
 

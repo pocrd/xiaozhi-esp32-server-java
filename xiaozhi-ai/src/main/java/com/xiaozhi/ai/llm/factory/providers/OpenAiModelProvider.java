@@ -1,9 +1,8 @@
 package com.xiaozhi.ai.llm.factory.providers;
 
-import com.xiaozhi.ai.llm.factory.ChatModelProvider;
-import com.xiaozhi.common.model.bo.ConfigBO;
-import com.xiaozhi.common.model.bo.RoleBO;
-import io.micrometer.observation.ObservationRegistry;
+import java.net.http.HttpClient;
+import java.time.Duration;
+
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.document.MetadataMode;
 import org.springframework.ai.embedding.EmbeddingModel;
@@ -24,9 +23,11 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.reactive.function.client.WebClient;
 
-import java.net.http.HttpClient;
-import java.time.Duration;
+import com.xiaozhi.ai.llm.factory.ChatModelProvider;
+import com.xiaozhi.common.model.bo.ConfigBO;
+import com.xiaozhi.common.model.bo.RoleBO;
 
+import io.micrometer.observation.ObservationRegistry;
 import lombok.extern.slf4j.Slf4j;
 /**
  * OpenAI及兼容OpenAI协议的模型提供者。
@@ -95,7 +96,7 @@ public class OpenAiModelProvider implements ChatModelProvider {
                 .observationRegistry(observationRegistry)
                 .build();
         
-        log.info("Created OpenAI ChatModel: model={}, endpoint={}, thinking={}", model, endpoint, enableThinking);
+        //log.info("Created OpenAI ChatModel: model={}, endpoint={}, thinking={}", model, endpoint, enableThinking);
         return chatModel;
     }
 

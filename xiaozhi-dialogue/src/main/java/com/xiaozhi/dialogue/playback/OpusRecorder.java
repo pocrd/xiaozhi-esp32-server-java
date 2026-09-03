@@ -128,7 +128,7 @@ public class OpusRecorder {
         }
         try {
             opusFile.close();
-            log.info("Opus音频文件已生成: {}", audioPath);
+            // log.info("Opus音频文件已生成: {}", audioPath);
             opusFile = null;
             updateMessage();
         } catch (IOException e) {

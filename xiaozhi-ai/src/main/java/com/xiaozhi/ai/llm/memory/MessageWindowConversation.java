@@ -39,8 +39,8 @@ public class MessageWindowConversation extends Conversation {
         } else {
             history = Collections.emptyList();
         }
-        log.info("加载对话历史: sessionScoped={}, ownerId={}, sessionId={}, size={}",
-                sessionScoped, ownerId, sessionId, history.size());
+        // log.info("加载对话历史: sessionScoped={}, ownerId={}, sessionId={}, size={}",
+        //         sessionScoped, ownerId, sessionId, history.size());
         super.messages.addAll(history);
     }
 

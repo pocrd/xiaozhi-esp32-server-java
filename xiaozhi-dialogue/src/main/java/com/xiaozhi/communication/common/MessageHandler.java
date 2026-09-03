@@ -393,7 +393,7 @@ public class MessageHandler {
         switch (message.getState()) {
             case ListenState.Start:
                 // 设备开始录音，进入聆听状态
-                log.info("开始监听 - Mode: {}", message.getMode());
+                // log.info("开始监听 - Mode: {}", message.getMode());
 
                 chatSession.transitionTo(DeviceState.LISTENING);
 
