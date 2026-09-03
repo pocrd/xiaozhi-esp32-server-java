@@ -358,7 +358,7 @@ public abstract class Player {
     public void stop() {
         isPlaying = false;
         // 子类（如ScheduledPlayer）会覆盖此方法进行更详细的清理
-        log.info("已取消音频发送任务 - SessionId: {}", session.getSessionId());
+        // log.info("已取消音频发送任务 - SessionId: {}", session.getSessionId());
     }
 
 }

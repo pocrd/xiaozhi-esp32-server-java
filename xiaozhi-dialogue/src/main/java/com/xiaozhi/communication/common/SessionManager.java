@@ -138,7 +138,7 @@ public class SessionManager {
 
     public void registerSession(String sessionId, ChatSession chatSession) {
         sessions.put(sessionId, chatSession);
-        log.info("会话已注册 - SessionId: {}, DeviceId: {}  SessionType: {}", sessionId, chatSession.getDeviceIdOrUnknown(), chatSession.getClass().getSimpleName());
+        // log.info("会话已注册 - SessionId: {}, DeviceId: {}  SessionType: {}", sessionId, chatSession.getDeviceIdOrUnknown(), chatSession.getClass().getSimpleName());
         String deviceId = chatSession.getDevice() != null ? chatSession.getDevice().getDeviceId() : null;
         applicationContext.publishEvent(new ChatSessionOpenedEvent(this, sessionId, deviceId));
     }
@@ -196,7 +196,7 @@ public class SessionManager {
                     return;
                 }
                 deviceRepository.updateState(deviceId, newState);
-                log.info("连接已关闭 - SessionId: {}, DeviceId: {}, 新状态: {}", sessionId, deviceId, newState);
+                // log.info("连接已关闭 - SessionId: {}, DeviceId: {}, 新状态: {}", sessionId, deviceId, newState);
             } catch (Exception e) {
                 log.error("更新设备状态失败 - DeviceId: {}", deviceId, e);
             }
@@ -234,7 +234,7 @@ public class SessionManager {
                 chatSession.close();
                 String closeDeviceId = chatSession.getDevice() != null ? chatSession.getDevice().getDeviceId() : null;
                 applicationContext.publishEvent(new ChatSessionClosedEvent(this, chatSession.getSessionId(), closeDeviceId));
-                log.info("会话已关闭 - SessionId: {}, DeviceId: {} SessionType: {}", chatSession.getSessionId(), chatSession.getDeviceIdOrUnknown(), chatSession.getClass().getSimpleName());
+                // log.info("会话已关闭 - SessionId: {}, DeviceId: {} SessionType: {}", chatSession.getSessionId(), chatSession.getDeviceIdOrUnknown(), chatSession.getClass().getSimpleName());
             }
             chatSession.clearAudioSinks();
         } catch (Exception e) {

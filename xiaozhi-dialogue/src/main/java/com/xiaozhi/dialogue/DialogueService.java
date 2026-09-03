@@ -459,7 +459,7 @@ public class DialogueService{
     public void abortDialogue(ChatSession session, String reason) {
         try {
             String sessionId = session.getSessionId();
-            log.info("中止对话 - SessionId: {}, DeviceId: {}, Reason: {}", sessionId, session.getDeviceIdOrUnknown(), reason);
+            // log.info("中止对话 - SessionId: {}, DeviceId: {}, Reason: {}", sessionId, session.getDeviceIdOrUnknown(), reason);
 
             // ASR 触发的打断不关流：startStt 刚建的新流上正跑着 STT
             if (!ABORT_REASON_ASR.equals(reason)) {

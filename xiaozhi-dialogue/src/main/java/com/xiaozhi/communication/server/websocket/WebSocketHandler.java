@@ -68,6 +68,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
 
         try {
             var msg = JsonUtil.fromJson(payload, Message.class);
+            log.info("收到消息 - SessionId: {}, DeviceId: {}, JsonNode: {}", sessionId, chatSession != null ? chatSession.getDeviceIdOrUnknown() : "unknown", message);
             if (Objects.requireNonNull(msg) instanceof HelloMessage m) {
                 handleHelloMessage(session, m);
             } else {
@@ -129,7 +130,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
         // 检查是否是客户端正常关闭连接导致的异常
         if (isClientCloseRequest(exception)) {
             // 客户端主动关闭，记录为信息级别日志而非错误
-            log.info("WebSocket连接被客户端主动关闭 - SessionId: {}, DeviceId: {}", sessionId, sessionManager.getSession(sessionId) != null ? sessionManager.getSession(sessionId).getDeviceIdOrUnknown() : "unknown");
+            // log.info("WebSocket连接被客户端主动关闭 - SessionId: {}, DeviceId: {}", sessionId, sessionManager.getSession(sessionId) != null ? sessionManager.getSession(sessionId).getDeviceIdOrUnknown() : "unknown");
             messageHandler.afterConnectionClosed(sessionId);
         } else {
             // 真正的传输错误
@@ -158,8 +159,6 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
 
     private void handleHelloMessage(WebSocketSession session, HelloMessage message) {
         var sessionId = session.getId();
-        log.info("收到hello消息 - SessionId: {}, DeviceId: {}, JsonNode: {}", sessionId, sessionManager.getSession(sessionId) != null ? sessionManager.getSession(sessionId).getDeviceIdOrUnknown() : "unknown", message);
-
         messageHandler.applyAecCapability(sessionId, message);
 
         ChatSession current = sessionManager.getSession(sessionId);

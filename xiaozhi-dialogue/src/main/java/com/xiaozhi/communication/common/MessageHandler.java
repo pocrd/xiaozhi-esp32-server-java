@@ -121,7 +121,7 @@ public class MessageHandler {
             redisBroadcast.closeDeviceSession(deviceId);
         }
 
-        log.info("开始查询设备信息 - DeviceId: {}", deviceId);
+        // log.info("开始查询设备信息 - DeviceId: {}", deviceId);
         DeviceBO device = Optional.ofNullable(deviceService.getBO(deviceId)).orElse(new DeviceBO());
         device.setDeviceId(deviceId);
         device.setSessionId(sessionId);
@@ -361,10 +361,10 @@ public class MessageHandler {
         if (chatSession != null) {
             chatSession.setDeviceAudioParams(deviceParams);
         }
-        log.info("客户端音频参数 - DeviceId: {}, 格式: {}, 采样率: {}, 声道: {}, 帧时长: {}ms",
-                chatSession.getDeviceIdOrUnknown(),
-                deviceParams.getFormat(), deviceParams.getSampleRate(),
-                deviceParams.getChannels(), deviceParams.getFrameDuration());
+        // log.info("客户端音频参数 - DeviceId: {}, 格式: {}, 采样率: {}, 声道: {}, 帧时长: {}ms",
+        //         chatSession.getDeviceIdOrUnknown(),
+        //         deviceParams.getFormat(), deviceParams.getSampleRate(),
+        //         deviceParams.getChannels(), deviceParams.getFrameDuration());
         String mismatch = deviceParams.mismatchAgainstServer();
         if (mismatch != null) {
             log.warn("设备音频参数与服务端不一致，可能影响识别或播放 - SessionId: {}, DeviceId: {}, {}", sessionId, chatSession.getDeviceIdOrUnknown(), mismatch);
@@ -373,8 +373,6 @@ public class MessageHandler {
 
     private void handleListenMessage(ChatSession chatSession, ListenMessage message) {
         String sessionId = chatSession.getSessionId();
-        log.info("收到listen消息 - SessionId: {}, DeviceId: {}, State: {}, Mode: {}", sessionId, chatSession.getDeviceIdOrUnknown(), message.getState(), message.getMode());
-
         // 会话标记为即将关闭时忽略listen消息；player 已被告别流程清空时按没有待执行回调处理
         Player player = chatSession.getPlayer();
         if (player != null && player.getFunctionAfterChat() != null) {

@@ -136,7 +136,7 @@ public class AliyunSttService implements SttService {
         // 收集每个 isSentenceEnd=true 的句子结果
         var recognition = Flux.<SttResult>create(sink -> {
             try {
-                log.info("开始使用{}模型进行语音识别", modelName);
+                //  log.info("开始使用{}模型进行语音识别", modelName);
                 recognizer.streamCall(param, Flowable.create(emitter -> {
                             audioForModel.subscribe(
                                     chunk -> emitter.onNext(ByteBuffer.wrap(chunk)),
@@ -151,8 +151,8 @@ public class AliyunSttService implements SttService {
                                         String emoTag = result.getSentence().getEmoTag();
                                         Double emoConfidence = result.getSentence().getEmoConfidence();
                                         SttResult sttResult = SttResult.withEmotion(text, emoTag, emoConfidence);
-                                        log.info("语音识别结果({}): {} [情感: {}, 置信度: {}]",
-                                                modelName, text, emoTag, emoConfidence);
+                                        // log.info("语音识别结果({}): {} [情感: {}, 置信度: {}]",
+                                        //         modelName, text, emoTag, emoConfidence);
                                         sink.next(sttResult);
                                         // 单句结束相对整轮识别（可能多句）仍属中间结果，一并通知上层
                                         notifyPartial(onPartialText, text);
