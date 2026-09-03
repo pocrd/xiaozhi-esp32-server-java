@@ -27,6 +27,7 @@ import com.xiaozhi.communication.ServerAddressProvider;
 import com.xiaozhi.communication.auth.DeviceAuthService;
 import com.xiaozhi.communication.registry.DialogueServerInfo;
 import com.xiaozhi.communication.registry.DialogueServerRegistry;
+import com.xiaozhi.device.config.OtaProperties;
 import com.xiaozhi.device.convert.DeviceConvert;
 import com.xiaozhi.device.domain.Device;
 import com.xiaozhi.device.domain.repository.DeviceRepository;
@@ -73,17 +74,16 @@ public class DeviceAppService {
     @Resource
     private DeviceAuthService deviceAuthService;
 
+    @Resource
+    private OtaProperties otaProperties;
+
     /**
      * 下发给设备的 WebSocket 二进制帧版本：v2 带时间戳，是服务端 AEC 回声对齐的前提
      */
     @Value("${xiaozhi.communication.websocket-protocol-version:2}")
     private int websocketProtocolVersion;
 
-    /** OTA 固件配置：key=dx/yd, value={url, version} */
-    @Value("#{${xiaozhi.ota.firmware:{}}}")
-    private Map<String, Map<String, String>> firmware;
-
-    /** DX 硬件设备（已知 MAC 地址硬编码，后续新设备由固件直接上报 hardwareType） */
+    /** DX 硬件设备（已知 MAC 地址硬编码，后续新设备由固件直接上报 hType） */
     private static final Set<String> DX_SET = Set.of(
     );
 
@@ -304,13 +304,13 @@ public class DeviceAppService {
             }
             req.setHType(hType);
         }
-        if (hType != null && firmware.containsKey(hType)) {
-            Map<String, String> fw = firmware.get(hType);
+        if (hType != null && otaProperties.getFirmware().containsKey(hType)) {
+            OtaProperties.FirmwareInfo fw = otaProperties.getFirmware().get(hType);
             Map<String, Object> firmwareInfo = new HashMap<>();
-            firmwareInfo.put("url", fw.get("url"));
-            firmwareInfo.put("version", fw.get("version"));
+            firmwareInfo.put("url", fw.getUrl());
+            firmwareInfo.put("version", fw.getVersion());
             otaResponse.put("firmware", firmwareInfo);
-            log.info("OTA固件信息：deviceId={}, hType={}, url={}", deviceId, hType, fw.get("url"));
+            log.info("OTA固件信息：deviceId={}, hType={}, url={}", deviceId, hType, fw.getUrl());
         }
         otaResponse.put("server_time", Map.of(
             "timestamp", System.currentTimeMillis(),
