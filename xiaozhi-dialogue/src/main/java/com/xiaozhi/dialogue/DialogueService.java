@@ -152,7 +152,7 @@ public class DialogueService{
                     break;
             }
         } catch (Exception e) {
-            log.error("处理音频数据失败: {}", e.getMessage(), e);
+            log.error("处理音频数据失败 - DeviceId: {}, {}", session.getDeviceIdOrUnknown(), e.getMessage(), e);
         }
     }
 
@@ -196,7 +196,7 @@ public class DialogueService{
         }
 
         if (bargeIn.compareAndSet(false, true) && player != null) {
-            log.info("用户开口，暂停播放 - SessionId: {}, partial: {}", session.getSessionId(), partialText);
+            log.info("用户开口，暂停播放 - SessionId: {}, DeviceId: {}, partial: {}", session.getSessionId(), session.getDeviceIdOrUnknown(), partialText);
             player.pause(BARGE_IN_PAUSE_MAX_MS);
         }
     }
@@ -209,7 +209,7 @@ public class DialogueService{
     boolean resolveBargeIn(ChatSession session, Persona persona, String text) {
         Player player = session.getPlayer();
         if (isEcho(session, text)) {
-            log.info("识别到的是设备自己的回声，续播 - SessionId: {}, text: {}", session.getSessionId(), text);
+            log.info("识别到的是设备自己的回声，续播 - SessionId: {}, DeviceId: {}, text: {}", session.getSessionId(), session.getDeviceIdOrUnknown(), text);
             if (player != null) {
                 player.resume();
             }
@@ -218,13 +218,13 @@ public class DialogueService{
         // 正在播的那句是问句时，"好的""对"是回答不是附和
         boolean answeringQuestion = player != null && endsWithQuestion(player.spokenSentences());
         if (!StringUtils.hasText(text) || (!answeringQuestion && intentService.isBackchannel(text))) {
-            log.info("误打断，续播 - SessionId: {}, text: {}", session.getSessionId(), text);
+            log.info("误打断，续播 - SessionId: {}, DeviceId: {}, text: {}", session.getSessionId(), session.getDeviceIdOrUnknown(), text);
             if (player != null) {
                 player.resume();
             }
             return false;
         }
-        log.info("确认打断 - SessionId: {}, text: {}", session.getSessionId(), text);
+        log.info("确认打断 - SessionId: {}, DeviceId: {}, text: {}", session.getSessionId(), session.getDeviceIdOrUnknown(), text);
         persona.markInterrupted();
         abortDialogue(session, ABORT_REASON_ASR);
         return true;
@@ -302,7 +302,7 @@ public class DialogueService{
                 }
                 // 播放刚结束时拾回的尾音也会被识别成一句话
                 if (isEcho(session, text)) {
-                    log.info("识别到的是设备自己的回声，忽略 - SessionId: {}, text: {}", sessionId, text);
+                    log.info("识别到的是设备自己的回声，忽略 - SessionId: {}, DeviceId: {}, text: {}", sessionId, session.getDeviceIdOrUnknown(), text);
                     return;
                 }
 
@@ -328,7 +328,7 @@ public class DialogueService{
                 }
 
             } catch (Exception e) {
-                log.error("流式识别错误: {}", e.getMessage(), e);
+                log.error("流式识别错误 - DeviceId: {}, {}", session.getDeviceIdOrUnknown(), e.getMessage(), e);
                 Player player = session.getPlayer();
                 if (player != null && player.isPaused()) {
                     player.resume();
@@ -341,7 +341,7 @@ public class DialogueService{
      * 处理语音唤醒
      */
     public void handleWakeWord(ChatSession session, String text) {
-        log.info("检测到唤醒词: {}", text);
+        log.info("检测到唤醒词: {}, DeviceId: {}", text, session.getDeviceIdOrUnknown());
         try {
             // 设置为 SPEAKING 状态，在唤醒响应期间忽略 VAD 检测
             session.transitionTo(DeviceState.SPEAKING);
@@ -354,7 +354,7 @@ public class DialogueService{
             saveWakeWordAudio(session);
             personaFactory.buildPersona(session).chat(text, false);
         } catch (Exception e) {
-            log.error("处理唤醒词失败: {}", e.getMessage(), e);
+            log.error("处理唤醒词失败 - DeviceId: {}, {}", session.getDeviceIdOrUnknown(), e.getMessage(), e);
         }
     }
 
@@ -399,11 +399,11 @@ public class DialogueService{
                     persona.chat(userMessage, true);
                 }
             } catch (Exception e) {
-                log.error("LLM对话处理失败: {}", e.getMessage(), e);
+                log.error("LLM对话处理失败 - DeviceId: {}, {}", session.getDeviceIdOrUnknown(), e.getMessage(), e);
             }
 
         } catch (Exception e) {
-            log.error("处理文本失败: {}", e.getMessage(), e);
+            log.error("处理文本失败 - DeviceId: {}, {}", session.getDeviceIdOrUnknown(), e.getMessage(), e);
         }
     }
 
@@ -459,7 +459,7 @@ public class DialogueService{
     public void abortDialogue(ChatSession session, String reason) {
         try {
             String sessionId = session.getSessionId();
-            log.info("中止对话 - SessionId: {}, Reason: {}", sessionId, reason);
+            log.info("中止对话 - SessionId: {}, DeviceId: {}, Reason: {}", sessionId, session.getDeviceIdOrUnknown(), reason);
 
             // ASR 触发的打断不关流：startStt 刚建的新流上正跑着 STT
             if (!ABORT_REASON_ASR.equals(reason)) {
@@ -483,7 +483,7 @@ public class DialogueService{
                     }
                     persona.onInterrupted();
                 } catch (Exception e) {
-                    log.error("打断后收尾对话历史失败: {}", e.getMessage(), e);
+                    log.error("打断后收尾对话历史失败 - DeviceId: {}, {}", session.getDeviceIdOrUnknown(), e.getMessage(), e);
                 }
             }
 
@@ -513,7 +513,7 @@ public class DialogueService{
                 }
             }
         } catch (Exception e) {
-            log.error("中止对话失败: {}", e.getMessage(), e);
+            log.error("中止对话失败 - DeviceId: {}, {}", session.getDeviceIdOrUnknown(), e.getMessage(), e);
         }
     }
 
@@ -542,9 +542,9 @@ public class DialogueService{
                 Path path = session.getAudioPath(WAKE_WORD_AUDIO_TAG, Instant.now());
                 AudioUtils.saveAsWav(path, pcm);
                 storageServiceFactory.getStorageService().upload(path, path.toString());
-                log.debug("唤醒词音频已采集: {}", path);
+                log.debug("唤醒词音频已采集 - DeviceId: {}, {}", session.getDeviceIdOrUnknown(), path);
             } catch (Exception e) {
-                log.warn("采集唤醒词音频失败: {}", e.getMessage());
+                log.warn("采集唤醒词音频失败 - DeviceId: {}, {}", session.getDeviceIdOrUnknown(), e.getMessage());
             }
         });
     }

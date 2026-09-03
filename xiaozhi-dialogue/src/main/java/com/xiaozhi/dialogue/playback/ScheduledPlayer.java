@@ -216,7 +216,7 @@ public class ScheduledPlayer extends Player {
                         }
                     },
                     throwable -> {
-                        log.error("TTS模型生成输出内容时发生错误：{}", throwable.getMessage());
+                        log.error("TTS模型生成输出内容时发生错误 - DeviceId: {}, {}", session.getDeviceIdOrUnknown(), throwable.getMessage());
                         // 代次已变：本轮已作废，不再推进队列
                         if (myGeneration != generation.get()) {
                             return;
@@ -296,7 +296,7 @@ public class ScheduledPlayer extends Player {
             runSendLoop(myGeneration);
         } catch (RuntimeException e) {
             // 发送失败（连接已断等）：结束本轮，不让 running 卡在 true
-            log.error("音频发送线程异常退出 - SessionId: {}: {}", session.getSessionId(), e.getMessage());
+            log.error("音频发送线程异常退出 - SessionId: {}, DeviceId: {}, {}", session.getSessionId(), session.getDeviceIdOrUnknown(), e.getMessage());
             if (generation.get() == myGeneration) {
                 running = false;
                 setPlaying(false);
@@ -408,7 +408,7 @@ public class ScheduledPlayer extends Player {
             while (paused && running && generation.get() == myGeneration) {
                 long remainingNs = pauseDeadlineNs - System.nanoTime();
                 if (remainingNs <= 0) {
-                    log.info("暂停超时，自动续播 - SessionId: {}", session.getSessionId());
+                    log.info("暂停超时，自动续播 - SessionId: {}, DeviceId: {}", session.getSessionId(), session.getDeviceIdOrUnknown());
                     doResume();
                     break;
                 }
@@ -431,7 +431,7 @@ public class ScheduledPlayer extends Player {
             if (!paused || System.nanoTime() < pauseDeadlineNs) {
                 return false;
             }
-            log.info("暂停超时，自动续播 - SessionId: {}", session.getSessionId());
+            log.info("暂停超时，自动续播 - SessionId: {}, DeviceId: {}", session.getSessionId(), session.getDeviceIdOrUnknown());
             doResume();
             return true;
         }
@@ -460,8 +460,8 @@ public class ScheduledPlayer extends Player {
     /** 调用方须持有 pauseLock。续播后立即接上，不再补句间静音 */
     private void doResume() {
         paused = false;
-        log.info("续播，已暂停 {}ms - SessionId: {}", (System.nanoTime() - pauseStartNs) / 1_000_000L,
-                session.getSessionId());
+        log.info("续播，已暂停 {}ms - SessionId: {}, DeviceId: {}", (System.nanoTime() - pauseStartNs) / 1_000_000L,
+                session.getSessionId(), session.getDeviceIdOrUnknown());
         gapFramesRemaining = 0;
         while (allOpusFrames.peek() == SENTENCE_GAP_MARKER) {
             allOpusFrames.poll();
@@ -482,8 +482,8 @@ public class ScheduledPlayer extends Player {
         long delay = startTimestamp + playPosition - currentTime;
 
         if (delay < -MAX_PLAYBACK_LAG_NS) {
-            log.info("发送线程失步，落后{}ms，重锚定时间轴 - SessionId: {}",
-                    -delay / 1_000_000L, session.getSessionId());
+            log.info("发送线程失步，落后{}ms，重锚定时间轴 - SessionId: {}, DeviceId: {}",
+                    -delay / 1_000_000L, session.getSessionId(), session.getDeviceIdOrUnknown());
             startTimestamp = currentTime - playPosition;
             delay = 0;
         }

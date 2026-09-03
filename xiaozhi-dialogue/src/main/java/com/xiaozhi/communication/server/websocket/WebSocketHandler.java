@@ -39,11 +39,11 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
         String deviceIdAuth = headers.get("x-dubbo-device-id");
         String token = headers.get("Authorization");
         if (deviceIdAuth == null || deviceIdAuth.isEmpty()) {
-            log.error("设备ID为空");
+            log.error("设备ID为空 - SessionId: {}", session.getId());
             try {
                 session.close(CloseStatus.BAD_DATA.withReason("设备ID为空"));
             } catch (IOException e) {
-                log.error("关闭WebSocket连接失败", e);
+                log.error("关闭WebSocket连接失败 - SessionId: {}", session.getId(), e);
             }
             return;
         }
@@ -81,7 +81,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
                     // 自动绑定成功，重新获取设备信息
                     device = chatSession != null ? chatSession.getDevice() : null;
                     if (device == null || device.getRoleId() == null) {
-                        log.warn("自动绑定后设备信息异常 - SessionId: {}", sessionId);
+                        log.warn("自动绑定后设备信息异常 - SessionId: {}, DeviceId: {}", sessionId, chatSession != null ? chatSession.getDeviceIdOrUnknown() : "unknown");
                         return;
                     }
                     log.info("自动绑定成功，继续处理消息 - SessionId: {}, DeviceId: {}", sessionId, device.getDeviceId());
@@ -89,7 +89,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
                 messageHandler.handleMessage(msg, sessionId);
             }
         } catch (Exception e) {
-            log.error("handleTextMessage处理失败", e);
+            log.error("handleTextMessage处理失败 - SessionId: {}, DeviceId: {}", sessionId, chatSession != null ? chatSession.getDeviceIdOrUnknown() : "unknown", e);
         }
     }
 
@@ -107,7 +107,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
         BinaryProtocolCodec.Frame frame = BinaryProtocolCodec.decode(version, data);
         if (frame == null) {
             // 设备声明的版本与实际帧格式不符，整个会话降回 v1 裸帧（收发同源，下行一并降级）
-            log.warn("二进制帧与协议v{}不符，会话降级为v1 - SessionId: {}, 帧长: {}", version, sessionId, data.length);
+            log.warn("二进制帧与协议v{}不符，会话降级为v1 - SessionId: {}, DeviceId: {}, 帧长: {}", version, sessionId, chatSession.getDeviceIdOrUnknown(), data.length);
             chatSession.setProtocolVersion(BinaryProtocolCodec.VERSION_V1);
             frame = new BinaryProtocolCodec.Frame(data, 0);
         }
@@ -116,10 +116,10 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        String sessionId = session.getId();
+        ChatSession chatSession = sessionManager.getSession(sessionId);
         messageHandler.afterConnectionClosed(sessionId);
 
-        log.info("WebSocket连接关闭 - SessionId: {}, 状态: {}", sessionId, status);
+        log.info("WebSocket连接关闭 - SessionId: {}, DeviceId: {}, 状态: {}", sessionId, chatSession != null ? chatSession.getDeviceIdOrUnknown() : "unknown", status);
     }
 
     @Override
@@ -128,11 +128,11 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
         // 检查是否是客户端正常关闭连接导致的异常
         if (isClientCloseRequest(exception)) {
             // 客户端主动关闭，记录为信息级别日志而非错误
-            log.info("WebSocket连接被客户端主动关闭 - SessionId: {}", sessionId);
+            log.info("WebSocket连接被客户端主动关闭 - SessionId: {}, DeviceId: {}", sessionId, sessionManager.getSession(sessionId) != null ? sessionManager.getSession(sessionId).getDeviceIdOrUnknown() : "unknown");
             messageHandler.afterConnectionClosed(sessionId);
         } else {
             // 真正的传输错误
-            log.error("WebSocket传输错误 - SessionId: {}", sessionId, exception);
+            log.error("WebSocket传输错误 - SessionId: {}, DeviceId: {}", sessionId, sessionManager.getSession(sessionId) != null ? sessionManager.getSession(sessionId).getDeviceIdOrUnknown() : "unknown", exception);
         }
     }
 
@@ -157,7 +157,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
 
     private void handleHelloMessage(WebSocketSession session, HelloMessage message) {
         var sessionId = session.getId();
-        log.info("收到hello消息 - SessionId: {}, JsonNode: {}", sessionId, message);
+        log.info("收到hello消息 - SessionId: {}, DeviceId: {}, JsonNode: {}", sessionId, sessionManager.getSession(sessionId) != null ? sessionManager.getSession(sessionId).getDeviceIdOrUnknown() : "unknown", message);
 
         messageHandler.applyAecCapability(sessionId, message);
 
@@ -193,7 +193,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
                 });
             }
         } catch (Exception e) {
-            log.error("发送hello响应失败", e);
+            log.error("发送hello响应失败 - SessionId: {}, DeviceId: {}", sessionId, sessionManager.getSession(sessionId) != null ? sessionManager.getSession(sessionId).getDeviceIdOrUnknown() : "unknown", e);
         }
     }
 
@@ -205,7 +205,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
             return BinaryProtocolCodec.VERSION_V1;
         }
         if (!BinaryProtocolCodec.isSupported(declared)) {
-            log.warn("设备声明了不支持的协议版本v{}，按v1处理 - SessionId: {}", declared, sessionId);
+            log.warn("设备声明了不支持的协议版本v{}，按v1处理 - SessionId: {}, DeviceId: {}", declared, sessionId, sessionManager.getSession(sessionId) != null ? sessionManager.getSession(sessionId).getDeviceIdOrUnknown() : "unknown");
             return BinaryProtocolCodec.VERSION_V1;
         }
         return declared;

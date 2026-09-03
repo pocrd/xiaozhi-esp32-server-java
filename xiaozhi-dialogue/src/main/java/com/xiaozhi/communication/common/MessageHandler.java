@@ -44,6 +44,8 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Component
 public class MessageHandler {
+    /** 设备端日志专用 logger，输出到独立的 device-log.log 文件 */
+    private static final org.slf4j.Logger DEVICE_LOG = org.slf4j.LoggerFactory.getLogger("DEVICE_LOG");
     @Resource
     private DeviceService deviceService;
 
@@ -327,7 +329,7 @@ public class MessageHandler {
                 captchaGenerationInProgress.remove(deviceId);
 
             } catch (Exception e) {
-                log.error("处理未绑定设备失败", e);
+                log.error("处理未绑定设备失败 - DeviceId: {}", deviceId, e);
                 captchaGenerationInProgress.remove(deviceId);
             }
         });
@@ -359,18 +361,19 @@ public class MessageHandler {
         if (chatSession != null) {
             chatSession.setDeviceAudioParams(deviceParams);
         }
-        log.info("客户端音频参数 - 格式: {}, 采样率: {}, 声道: {}, 帧时长: {}ms",
+        log.info("客户端音频参数 - DeviceId: {}, 格式: {}, 采样率: {}, 声道: {}, 帧时长: {}ms",
+                chatSession.getDeviceIdOrUnknown(),
                 deviceParams.getFormat(), deviceParams.getSampleRate(),
                 deviceParams.getChannels(), deviceParams.getFrameDuration());
         String mismatch = deviceParams.mismatchAgainstServer();
         if (mismatch != null) {
-            log.warn("设备音频参数与服务端不一致，可能影响识别或播放 - SessionId: {}, {}", sessionId, mismatch);
+            log.warn("设备音频参数与服务端不一致，可能影响识别或播放 - SessionId: {}, DeviceId: {}, {}", sessionId, chatSession.getDeviceIdOrUnknown(), mismatch);
         }
     }
 
     private void handleListenMessage(ChatSession chatSession, ListenMessage message) {
         String sessionId = chatSession.getSessionId();
-        log.info("收到listen消息 - SessionId: {}, State: {}, Mode: {}", sessionId, message.getState(), message.getMode());
+        log.info("收到listen消息 - SessionId: {}, DeviceId: {}, State: {}, Mode: {}", sessionId, chatSession.getDeviceIdOrUnknown(), message.getState(), message.getMode());
 
         // 会话标记为即将关闭时忽略listen消息；player 已被告别流程清空时按没有待执行回调处理
         Player player = chatSession.getPlayer();
@@ -385,7 +388,7 @@ public class MessageHandler {
 
         if (message.getMsg() != null && !message.getMsg().isEmpty()) {
             chatSession.setGuaxiang(message.getMsg());
-            log.info("收到卦象信息 - SessionId: {}, Guaxiang: {}", sessionId, message.getMsg());
+            log.info("收到卦象信息 - SessionId: {}, DeviceId: {}, Guaxiang: {}", sessionId, chatSession.getDeviceIdOrUnknown(), message.getMsg());
         }
 
 
@@ -489,6 +492,21 @@ public class MessageHandler {
         sessionManager.closeSession(session);
     }
 
+    private void handleLogMessage(ChatSession chatSession, LogMessage message) {
+        String deviceId = chatSession.getDevice() != null ? chatSession.getDevice().getDeviceId() : null;
+        String level = message.getLevel() != null ? message.getLevel() : "info";
+        String logContent = message.getMessage();
+        Long ts = message.getTimestamp();
+        String formatted = String.format("[设备日志] deviceId=%s, ts=%s, level=%s, %s", deviceId, ts, level, logContent);
+
+        switch (level.toLowerCase()) {
+            case "fatal" -> DEVICE_LOG.error(formatted);
+            case "error" -> DEVICE_LOG.error(formatted);
+            case "debug" -> DEVICE_LOG.debug(formatted);
+            default -> DEVICE_LOG.info(formatted);
+        }
+    }
+
     private void handleDeviceMcpMessage(ChatSession chatSession, DeviceMcpMessage message) {
         // 设备可能回来一条没有 payload 或没有 id 的 mcp 消息，取不到请求号就直接忽略
         DeviceMcpPayload payload = message.getPayload();
@@ -513,6 +531,7 @@ public class MessageHandler {
             case AbortMessage m -> handleAbortMessage(chatSession, m);
             case GoodbyeMessage m -> handleGoodbyeMessage(chatSession, m);
             case DeviceMcpMessage m -> handleDeviceMcpMessage(chatSession, m);
+            case LogMessage m -> handleLogMessage(chatSession, m);
             default -> {
             }
         }

@@ -31,11 +31,19 @@ public class EmojiUtils {
             { 0x2700, 0x27BF }, // 装饰符号
             { 0x1F1E6, 0x1F1FF }, // 国旗表情
             { 0x1F700, 0x1F77F }, // 额外的表情符号
-            { 0x20000, 0x2A6DF }, // 补充符号（更多表情）
             { 0x1F3FB, 0x1F3FF }, // 表情符号修饰符
-            { 0x200D, 0x200D }, // 零宽连接符
-            { 0xFE0F, 0xFE0F }, // 变体选择器
     };
+
+    /**
+     * 格式控制字符（零宽连接符、变体选择器等），
+     * 它们不是表情符号本身，但常作为表情组合的一部分出现，
+     * 应静默移除而不映射为情绪。
+     */
+    private static boolean isEmojiModifier(int codePoint) {
+        return codePoint == 0x200D   // 零宽连接符 ZWJ
+            || codePoint == 0xFE0F   // 变体选择器 VS16
+            || (codePoint >= 0x1F3FB && codePoint <= 0x1F3FF); // 肤色修饰符
+    }
 
     private static final Pattern HTML_TAG_PATTERN = Pattern.compile("<[^>]+>");
     private static final Pattern SPECIAL_CHARS_PATTERN = Pattern.compile("[@#№$%&*]");
@@ -233,7 +241,7 @@ public class EmojiUtils {
         if (text == null || text.isEmpty()) {
             return false;
         }
-        return PARENTHESES_PATTERN.matcher(text).find() || KAOMOJI_PATTERN.matcher(text).find();
+        return KAOMOJI_PATTERN.matcher(text).find();
     }
 
     /**
@@ -246,7 +254,7 @@ public class EmojiUtils {
         if (text == null) {
             return null;
         }
-        return KAOMOJI_PATTERN.matcher(stripParentheses(text)).replaceAll("");
+        return KAOMOJI_PATTERN.matcher(text).replaceAll("");
     }
 
     /**
@@ -311,6 +319,7 @@ public class EmojiUtils {
         int length = text.length();
         for (int i = 0; i < length;) {
             int codePoint = text.codePointAt(i);
+            int charCount = Character.charCount(codePoint);
             if (isEmoji(codePoint)) {
                 // 转换为表情字符串并匹配情感词
                 String emoji = new String(Character.toChars(codePoint));
@@ -318,13 +327,12 @@ public class EmojiUtils {
                 if (mood != null && !mood.isEmpty()) {
                     moods.add(mood);
                 }
-                // 跳过当前表情符号
-                i += Character.charCount(codePoint);
-            } else {
-                // 保留非表情字符
+            } else if (!isEmojiModifier(codePoint)) {
+                // 保留非表情、非格式控制字符
                 cleanedText.appendCodePoint(codePoint);
-                i++;
             }
+            // 格式控制字符（ZWJ、VS16、肤色修饰符）静默跳过，不映射情绪
+            i += charCount;
         }
         
         // 过滤颜文字

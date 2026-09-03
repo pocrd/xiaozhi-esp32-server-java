@@ -45,6 +45,13 @@ public abstract class ChatSession {
      */
     protected DeviceBO device;
 
+    /**
+     * 获取设备ID，设备未绑定时返回 "unknown"
+     */
+    public String getDeviceIdOrUnknown() {
+        return device != null && device.getDeviceId() != null ? device.getDeviceId() : "unknown";
+    }
+
     protected String guaxiang;
 
     /**
@@ -78,7 +85,7 @@ public abstract class ChatSession {
             return;
         }
         this.deviceState = newState;
-        log.debug("状态转换: {} -> {} (SessionId: {})", oldState, newState, sessionId);
+        log.debug("状态转换: {} -> {} (SessionId: {}, DeviceId: {})", oldState, newState, sessionId, getDeviceIdOrUnknown());
     }
 
     /**

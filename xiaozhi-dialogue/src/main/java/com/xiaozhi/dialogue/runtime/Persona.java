@@ -212,8 +212,9 @@ public class Persona {
 
         Flux<ChatResponse> chatFlux = chatModel.stream(prompt)
             .doOnSubscribe(subscription -> {
-                log.info("[LLM] 开始调用大模型 - SessionId: {}, Model: {}, 消息数: {}, 工具数: {}",
+                log.info("[LLM] 开始调用大模型 - SessionId: {}, DeviceId: {}, Model: {}, 消息数: {}, 工具数: {}",
                         sessionId,
+                        getSession().getDeviceIdOrUnknown(),
                         chatModel.getClass().getSimpleName(),
                         messages.size(),
                         effectiveTools.size());
@@ -601,6 +602,7 @@ public class Persona {
             StringBuilder logBuilder = new StringBuilder();
             logBuilder.append("\n========== LLM 请求详情 ==========");
             logBuilder.append("\n[SessionId]: ").append(sessionId);
+            logBuilder.append("\n[DeviceId]: ").append(getSession().getDeviceIdOrUnknown());
             logBuilder.append("\n[消息总数]: ").append(prompt.getInstructions().size());
             logBuilder.append("\n[工具数量]: ").append(tools.size());
             
@@ -645,6 +647,7 @@ public class Persona {
             StringBuilder logBuilder = new StringBuilder();
             logBuilder.append("\n========== LLM 响应详情 ==========");
             logBuilder.append("\n[SessionId]: ").append(sessionId);
+            logBuilder.append("\n[DeviceId]: ").append(getSession().getDeviceIdOrUnknown());
             logBuilder.append("\n[总耗时]: ").append(totalDuration).append("ms");
             
             // 打印助手回复

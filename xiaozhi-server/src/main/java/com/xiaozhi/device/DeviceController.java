@@ -1,23 +1,27 @@
 package com.xiaozhi.device;
 
-import com.xiaozhi.server.web.BaseController;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
 import java.io.IOException;
-import java.util.List;
 import java.util.Map;
 
-import cn.dev33.satoken.annotation.SaCheckPermission;
-import cn.dev33.satoken.annotation.SaIgnore;
-import cn.dev33.satoken.stp.StpUtil;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.bind.annotation.RestController;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.xiaozhi.common.annotation.AuditLog;
 import com.xiaozhi.common.annotation.CheckOwner;
 import com.xiaozhi.common.model.req.DeviceBatchUpdateReq;
@@ -29,17 +33,21 @@ import com.xiaozhi.common.model.req.OtaReq;
 import com.xiaozhi.common.model.resp.DeviceResp;
 import com.xiaozhi.common.model.resp.PageResp;
 import com.xiaozhi.common.web.ApiResponse;
+import com.xiaozhi.server.web.BaseController;
 import com.xiaozhi.utils.JsonUtil;
 import com.xiaozhi.utils.RequestContextUtils;
 
+import cn.dev33.satoken.annotation.SaCheckPermission;
+import cn.dev33.satoken.annotation.SaIgnore;
+import cn.dev33.satoken.stp.StpUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.Resource;
-import lombok.extern.slf4j.Slf4j;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 设备管理

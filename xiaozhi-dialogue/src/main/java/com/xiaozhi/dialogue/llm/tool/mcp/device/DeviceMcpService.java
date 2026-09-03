@@ -136,7 +136,7 @@ public class DeviceMcpService {
 
         DeviceMcpMessage result = sendMcpRequest(chatSession, message);
         if (result != null) {
-            log.debug("SessionId: {}, MCP initialized successfully", chatSession.getSessionId());
+            log.debug("SessionId: {}, DeviceId: {}, MCP initialized successfully", chatSession.getSessionId(), chatSession.getDeviceIdOrUnknown());
             return result;
         }
         return null;
@@ -221,7 +221,7 @@ public class DeviceMcpService {
                             return callOutcome.failureReason();
                         }
                         DeviceMcpMessage resp = callOutcome.response();
-                        log.info("SessionId: {}, MCP function call response: {}", chatSession.getSessionId(), resp);
+                        log.info("SessionId: {}, DeviceId: {}, MCP function call response: {}", chatSession.getSessionId(), chatSession.getDeviceIdOrUnknown(), resp);
                         Map<String, Object> callResult = resp.getPayload().getResult();
                         if (callResult == null) {
                             return deviceErrorMessage(resp);
@@ -331,7 +331,7 @@ public class DeviceMcpService {
         Long id = mcpMessage.getPayload().getId();
         // 连接已断就不必等满超时，发送本身不抛异常，等下去只是白等
         if (!chatSession.isOpen()) {
-            log.warn("SessionId: {}, 连接已关闭，设备指令未下发, id: {}", chatSession.getSessionId(), id);
+            log.warn("SessionId: {}, DeviceId: {}, 连接已关闭，设备指令未下发, id: {}", chatSession.getSessionId(), chatSession.getDeviceIdOrUnknown(), id);
             return new McpCallResult(null, "设备连接不可用，指令没有下发成功。请告诉用户设备当前无法控制");
         }
         CompletableFuture<DeviceMcpMessage> future = new CompletableFuture<>();
@@ -344,15 +344,15 @@ public class DeviceMcpService {
             chatSession.sendTextMessage(JsonUtil.toJson(mcpMessage));
             return new McpCallResult(future.get(mcpRequestTimeoutSeconds, TimeUnit.SECONDS), null);
         } catch (TimeoutException e) {
-            log.warn("SessionId: {}, 设备指令等待超时, id: {}", chatSession.getSessionId(), id);
+            log.warn("SessionId: {}, DeviceId: {}, 设备指令等待超时, id: {}", chatSession.getSessionId(), chatSession.getDeviceIdOrUnknown(), id);
             return new McpCallResult(null,
                     "设备在" + mcpRequestTimeoutSeconds + "秒内没有响应，可能不在线或正忙。可以稍后重试，或者告诉用户这次没能执行");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.warn("SessionId: {}, 设备指令被中断, id: {}", chatSession.getSessionId(), id);
+            log.warn("SessionId: {}, DeviceId: {}, 设备指令被中断, id: {}", chatSession.getSessionId(), chatSession.getDeviceIdOrUnknown(), id);
             return new McpCallResult(null, "本次设备指令被中断，没有执行");
         } catch (Exception e) {
-            log.error("SessionId: {}, 设备指令下发失败, id: {}", chatSession.getSessionId(), id, e);
+            log.error("SessionId: {}, DeviceId: {}, 设备指令下发失败, id: {}", chatSession.getSessionId(), chatSession.getDeviceIdOrUnknown(), id, e);
             return new McpCallResult(null, "设备连接不可用，指令没有下发成功。请告诉用户设备当前无法控制");
         } finally {
             pendingRequests.remove(id);

@@ -19,10 +19,11 @@ import javax.validation.constraints.NotNull;
         @JsonSubTypes.Type(value = IotMessage.class, name = "iot"),
         @JsonSubTypes.Type(value = AbortMessage.class, name = "abort"),
         @JsonSubTypes.Type(value = GoodbyeMessage.class, name = "goodbye"),
+        @JsonSubTypes.Type(value = LogMessage.class, name = "log"),
         @JsonSubTypes.Type(value = UnknownMessage.class, name = "unknown")
 })
 public sealed abstract class Message
-        permits AbortMessage, GoodbyeMessage, HelloMessage, IotMessage, ListenMessage, DeviceMcpMessage, UnknownMessage {
+        permits AbortMessage, GoodbyeMessage, HelloMessage, IotMessage, ListenMessage, DeviceMcpMessage, LogMessage, UnknownMessage {
 
     public Message() {
         this.type = "unknown";

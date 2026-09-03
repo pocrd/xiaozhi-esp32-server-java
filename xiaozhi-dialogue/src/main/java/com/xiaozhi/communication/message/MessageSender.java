@@ -27,7 +27,7 @@ public class MessageSender {
 
     public void sendTtsMessage(ChatSession session, String text, String state) {
         if (session == null || !session.isOpen()) {
-            log.error("ChatSession为null 或者已关闭，请检查！{}, {}", Thread.currentThread().getName(), Arrays.toString(Thread.currentThread().getStackTrace()) );
+            log.error("ChatSession为null 或者已关闭，请检查！DeviceId: {}, {}, {}", session != null ? session.getDeviceIdOrUnknown() : "unknown", Thread.currentThread().getName(), Arrays.toString(Thread.currentThread().getStackTrace()) );
             return;
         }
         ObjectNode messageJson = objectMapper.createObjectNode();
@@ -38,7 +38,7 @@ public class MessageSender {
         }
 
         String jsonMessage = messageJson.toString();
-        log.info("sendTtsMessage发送消息 - SessionId: {}, Message: {}", session.getSessionId(), jsonMessage);
+        log.info("sendTtsMessage发送消息 - SessionId: {}, DeviceId: {}, Message: {}", session.getSessionId(), session.getDeviceIdOrUnknown(), jsonMessage);
         sendTextMessage(session, jsonMessage);
 
         if ("stop".equals(state)) {
@@ -48,7 +48,7 @@ public class MessageSender {
 
     public void sendSttMessage(ChatSession session, String text) {
         if (session == null || !session.isOpen()) {
-            log.warn("sendSttMessage无法发送消息 - 会话已关闭或为null");
+            log.warn("sendSttMessage无法发送消息 - 会话已关闭或为null, DeviceId: {}", session != null ? session.getDeviceIdOrUnknown() : "unknown");
             return;
         }
         ObjectNode messageJson = objectMapper.createObjectNode();
@@ -56,13 +56,13 @@ public class MessageSender {
         messageJson.put("text", text);
 
         String jsonMessage = messageJson.toString();
-        log.info("sendSttMessage发送消息 - SessionId: {}, Message: {}", session.getSessionId(), jsonMessage);
+        log.info("sendSttMessage发送消息 - SessionId: {}, DeviceId: {}, Message: {}", session.getSessionId(), session.getDeviceIdOrUnknown(), jsonMessage);
         sendTextMessage(session, jsonMessage);
     }
 
     public void sendIotCommandMessage(ChatSession session, List<Map<String, Object>> commands) {
         if (session == null || !session.isOpen()) {
-            log.warn("sendIotCommandMessage无法发送消息 - 会话已关闭或为null");
+            log.warn("sendIotCommandMessage无法发送消息 - 会话已关闭或为null, DeviceId: {}", session != null ? session.getDeviceIdOrUnknown() : "unknown");
             return;
         }
         ObjectNode messageJson = objectMapper.createObjectNode();
@@ -71,13 +71,13 @@ public class MessageSender {
         messageJson.set("commands", objectMapper.valueToTree(commands));
 
         String jsonMessage = messageJson.toString();
-        log.debug("sendIotCommandMessage发送iot消息 - SessionId: {}, Message: {}", session.getSessionId(), messageJson);
+        log.debug("sendIotCommandMessage发送iot消息 - SessionId: {}, DeviceId: {}, Message: {}", session.getSessionId(), session.getDeviceIdOrUnknown(), messageJson);
         sendTextMessage(session, jsonMessage);
     }
 
     public void sendEmotion(ChatSession session, String emotion) {
         if (session == null || !session.isOpen()) {
-            log.warn("sendEmotion无法发送消息 - 会话已关闭或为null");
+            log.warn("sendEmotion无法发送消息 - 会话已关闭或为null, DeviceId: {}", session != null ? session.getDeviceIdOrUnknown() : "unknown");
             return;
         }
         ObjectNode messageJson = objectMapper.createObjectNode();
@@ -86,7 +86,7 @@ public class MessageSender {
         messageJson.put("emotion", emotion);
         messageJson.put("text", emotion);
         String jsonMessage = messageJson.toString();
-        log.info("sendEmotion发送Emotion消息 - SessionId: {}, Message: {}", session.getSessionId(), jsonMessage);
+        log.info("sendEmotion发送Emotion消息 - SessionId: {}, DeviceId: {}, Message: {}", session.getSessionId(), session.getDeviceIdOrUnknown(), jsonMessage);
         sendTextMessage(session, jsonMessage);
     }
 
@@ -97,7 +97,7 @@ public class MessageSender {
             }
             chatSession.sendTextMessage(message);
         } catch (Exception e) {
-            log.error("发送消息时发生异常 - SessionId: {}, Error: {}", chatSession.getSessionId(), e.getMessage());
+            log.error("发送消息时发生异常 - SessionId: {}, DeviceId: {}, Error: {}", chatSession.getSessionId(), chatSession.getDeviceIdOrUnknown(), e.getMessage());
             throw new RuntimeException("发送消息失败, 消息内容: " + message, e);
         }
     }
@@ -109,7 +109,7 @@ public class MessageSender {
             }
             chatSession.sendBinaryMessage(opusFrame, timestamp);
         } catch (Exception e) {
-            log.error("发送消息时发生异常 - SessionId: {}, Error: {}", chatSession.getSessionId(), e.getMessage());
+            log.error("发送消息时发生异常 - SessionId: {}, DeviceId: {}, Error: {}", chatSession.getSessionId(), chatSession.getDeviceIdOrUnknown(), e.getMessage());
             throw new RuntimeException("发送音频消息失败, 消息内容", e);
         }
     }
