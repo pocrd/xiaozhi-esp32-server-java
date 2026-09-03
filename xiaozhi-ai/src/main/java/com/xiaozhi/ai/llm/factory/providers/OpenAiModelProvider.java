@@ -20,8 +20,6 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.http.client.reactive.JdkClientHttpConnector;
 import org.springframework.stereotype.Component;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -60,15 +58,11 @@ public class OpenAiModelProvider implements ChatModelProvider {
         Double temperature = role.getTemperature();
         Double topP = role.getTopP();
         
-        MultiValueMap<String, String> headers = new LinkedMultiValueMap<>();
-        headers.add("Content-Type", "application/json");
-        
         // LM Studio不支持Http/2，所以需要强制使用HTTP/1.1
         var openAiApi = OpenAiApi.builder()
                 .apiKey(StringUtils.hasText(apiKey) ? new SimpleApiKey(apiKey) : new NoopApiKey())
                 .baseUrl(endpoint)
                 .completionsPath("/chat/completions")
-                .headers(headers)
                 .webClientBuilder(WebClient.builder()
                         // Force HTTP/1.1 for streaming
                         .clientConnector(new JdkClientHttpConnector(HttpClient.newBuilder()
@@ -78,7 +72,7 @@ public class OpenAiModelProvider implements ChatModelProvider {
                 .restClientBuilder(RestClient.builder()
                         .requestFactory(createRequestFactory()))
                 .build();
-        
+
         boolean enableThinking = Boolean.TRUE.equals(config.getEnableThinking());
 
         var chatOptionsBuilder = OpenAiChatOptions.builder()
@@ -89,10 +83,8 @@ public class OpenAiModelProvider implements ChatModelProvider {
                 .extraBody(java.util.Map.of("enable_thinking", false))
                 .streamUsage(true);
 
-        if (enableThinking) {
-            chatOptionsBuilder.reasoningEffort("medium");
-            log.info("OpenAI model {} 已启用思考模式，reasoningEffort=medium", model);
-        }
+        applyThinkingOptions(chatOptionsBuilder, enableThinking, model);
+        applyProviderOptions(chatOptionsBuilder, model);
 
         var openAiChatOptions = chatOptionsBuilder.build();
         
@@ -107,16 +99,39 @@ public class OpenAiModelProvider implements ChatModelProvider {
         return chatModel;
     }
 
+    /**
+     * 应用思考（推理）相关参数。
+     * <p>
+     * OpenAI 及标准兼容协议：启用时设置 {@code reasoningEffort=medium}，
+     * 关闭时不下发该参数（由服务端决定默认行为）。
+     * 子类可 override 以适配各厂商差异（如火山需要显式下发以关闭思考）。
+     *
+     * @param builder        OpenAiChatOptions 构造器
+     * @param enableThinking 是否启用思考
+     * @param model          模型名称（用于日志）
+     */
+    protected void applyThinkingOptions(OpenAiChatOptions.Builder builder, boolean enableThinking, String model) {
+        if (enableThinking) {
+            builder.reasoningEffort("medium");
+            log.info("OpenAI model {} 已启用思考模式，reasoningEffort=medium", model);
+        }
+    }
+
+    /**
+     * 应用提供商专属的 Chat API 请求参数。
+     *
+     * @param builder Chat 选项构造器
+     * @param model   模型名称（用于日志）
+     */
+    protected void applyProviderOptions(OpenAiChatOptions.Builder builder, String model) {
+    }
+
     @Override
     public EmbeddingModel createEmbeddingModel(ConfigBO config) {
-        MultiValueMap<String, String> headers = new LinkedMultiValueMap<>();
-        headers.add("Content-Type", "application/json");
-
         var openAiApi = OpenAiApi.builder()
                 .apiKey(StringUtils.hasText(config.getApiKey()) ? new SimpleApiKey(config.getApiKey()) : new NoopApiKey())
                 .baseUrl(config.getApiUrl())
                 .embeddingsPath("/embeddings")
-                .headers(headers)
                 .webClientBuilder(WebClient.builder()
                         .clientConnector(new JdkClientHttpConnector(HttpClient.newBuilder()
                                 .version(HttpClient.Version.HTTP_1_1)
@@ -139,4 +154,3 @@ public class OpenAiModelProvider implements ChatModelProvider {
         return factory;
     }
 }
-

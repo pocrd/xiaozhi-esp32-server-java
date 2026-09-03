@@ -15,12 +15,13 @@ import { useTable } from '@/composables/useTable'
 import { useRoleManager } from '@/composables/useRoleManager'
 import { useMemoryView } from '@/composables/useMemoryView'
 import { useClipboard } from '@/composables/useClipboard'
+import { useUserStore } from '@/store/user'
 import { ROUTES } from '@/router/routes'
 import { queryRoles, addRole, updateRole, deleteRole, testVoice, getSystemGlobalTools, getDisabledTools, updateToolsStatus } from '@/services/role'
 import { queryTemplates } from '@/services/template'
 import { getResourceUrl } from '@/utils/resource'
 import { useAvatar } from '@/composables/useAvatar'
-import { uploadFile } from '@/services/upload'
+import { uploadFile, type UploadResponse } from '@/services/upload'
 import type { PromptTemplate, Role, RoleFormData } from '@/types/role'
 import type { TableColumnsType, TablePaginationConfig } from 'ant-design-vue'
 import type { McpToolItem } from '@/types/mcpTool'
@@ -29,6 +30,7 @@ import TableActionButtons from '@/components/TableActionButtons.vue'
 const { t } = useI18n()
 const { getAvatarUrl } = useAvatar()
 const { copy } = useClipboard()
+const userStore = useUserStore()
 
 const router = useRouter()
 const { navigateToMemory } = useMemoryView()
@@ -76,6 +78,7 @@ const formData = reactive<RoleFormData>({
   vadSilenceTh: 0.3,
   vadEnergyTh: 0.01,
   vadSilenceMs: 1200,
+  inactiveTimeoutSeconds: 60,
   voiceName: undefined,
   ttsId: undefined,
   gender: '',
@@ -87,6 +90,18 @@ const formData = reactive<RoleFormData>({
 // 编辑状态
 const editingRoleId = ref<number>()
 const submitLoading = ref(false)
+const lastInactiveTimeoutSeconds = ref(60)
+const inactiveTimeoutEnabled = computed({
+  get: () => formData.inactiveTimeoutSeconds > 0,
+  set: (enabled: boolean) => {
+    if (enabled) {
+      formData.inactiveTimeoutSeconds = lastInactiveTimeoutSeconds.value
+    } else {
+      lastInactiveTimeoutSeconds.value = formData.inactiveTimeoutSeconds || 60
+      formData.inactiveTimeoutSeconds = 0
+    }
+  }
+})
 
 // 头像上传
 const avatarUrl = ref('')
@@ -252,6 +267,7 @@ const handleEdit = (record: Role) => {
       vadSilenceTh: record.vadSilenceTh ?? 0.3,
       vadEnergyTh: record.vadEnergyTh ?? 0.01,
       vadSilenceMs: record.vadSilenceMs ?? 1200,
+      inactiveTimeoutSeconds: record.inactiveTimeoutSeconds ?? 60,
       voiceName: record.voiceName || '',
       ttsId: voiceInfo?.ttsId,
       gender: voiceInfo?.gender || '',
@@ -259,6 +275,9 @@ const handleEdit = (record: Role) => {
       ttsSpeed: record.ttsSpeed ?? 1.0,
       memoryType: record.memoryType || 'window'
     })
+    lastInactiveTimeoutSeconds.value = record.inactiveTimeoutSeconds && record.inactiveTimeoutSeconds > 0
+      ? record.inactiveTimeoutSeconds
+      : 60
 
     // 加载 MCP 工具列表
     loadAllMcpTools()
@@ -416,6 +435,7 @@ const resetForm = () => {
     vadSilenceTh: 0.3,
     vadEnergyTh: 0.01,
     vadSilenceMs: 1200,
+    inactiveTimeoutSeconds: 60,
     voiceName: undefined,
     ttsId: undefined,
     gender: '',
@@ -423,6 +443,7 @@ const resetForm = () => {
     ttsSpeed: 1.0,
     memoryType: 'window'
   })
+  lastInactiveTimeoutSeconds.value = 60
 }
 
 // 模型类型变化
@@ -496,9 +517,9 @@ const handlePlayVoice = async (voiceName?: string) => {
       // 清除loading状态
       loadingVoiceId.value = ''
 
-      if (result.code === 200 && result.data) {
-        // 使用 getResourceUrl 处理音频路径
-        const audioUrl = getResourceUrl(result.data)
+      if (result.code === 200 && result.data?.audioUrl) {
+        // 使用 getResourceUrl 处理音频路径（云存储为完整 URL，直接返回；本地为相对路径，拼接后端地址）
+        const audioUrl = getResourceUrl(result.data.audioUrl)
         if (audioUrl) {
           // 创建音频对象
           audio = new Audio(audioUrl)
@@ -710,7 +731,9 @@ const beforeAvatarUpload: UploadProps['beforeUpload'] = (file) => {
 
 // 上传头像文件
 const uploadAvatarFile = async (file: File): Promise<string> => {
-  return await uploadFile(file, 'avatar') as string
+  const res = await uploadFile(file, 'avatar', { fullResponse: true }) as UploadResponse
+  // 本地存储用相对路径入库（避免把主机名写死进库）；云存储无 relativePath，用签名 URL，后端剥签名/重签名
+  return res.relativePath || res.url
 }
 
 // 移除头像
@@ -949,7 +972,7 @@ if (!editingRoleId.value) {
         <a-tab-pane
           key="2"
           :tab="editingRoleId ? t('role.updateRole') : t('role.createRole')"
-          v-permission="editingRoleId ? 'system:role:update' : 'system:role:create'"
+          v-if="userStore.hasPermission(editingRoleId ? 'system:role:update' : 'system:role:create')"
         >
           <a-form
             ref="formRef"
@@ -1029,6 +1052,39 @@ if (!editingRoleId.value) {
                   <span style="margin-left: 8px; color: var(--ant-color-text-tertiary)">
                     {{ t('role.defaultRoleTip') }}
                   </span>
+                </a-form-item>
+              </a-col>
+            </a-row>
+
+            <!-- 会话设置 -->
+            <a-divider orientation="left">{{ t('role.sessionSettings') }}</a-divider>
+
+            <a-row :gutter="20">
+              <a-col :span="24">
+                <a-form-item :label="t('role.inactiveAutoEnd')">
+                  <a-switch v-model:checked="inactiveTimeoutEnabled" />
+                  <span style="margin-left: 8px; color: var(--ant-color-text-tertiary)">
+                    {{ t('role.inactiveAutoEndTip') }}
+                  </span>
+                </a-form-item>
+              </a-col>
+
+              <a-col :xl="8" :lg="12" :xs="24">
+                <a-form-item
+                  :label="t('role.inactiveDuration')"
+                  name="inactiveTimeoutSeconds"
+                  :rules="inactiveTimeoutEnabled ? [{ type: 'number', min: 10, max: 3600, message: t('role.inactiveDurationRange') }] : []"
+                >
+                  <a-input-number
+                    v-model:value="formData.inactiveTimeoutSeconds"
+                    :disabled="!inactiveTimeoutEnabled"
+                    :min="10"
+                    :max="3600"
+                    :step="10"
+                    style="width: 100%"
+                  >
+                    <template #addonAfter>{{ t('role.seconds') }}</template>
+                  </a-input-number>
                 </a-form-item>
               </a-col>
             </a-row>

@@ -1,6 +1,7 @@
 package com.xiaozhi.common.model.resp;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.xiaozhi.common.annotation.SignedFileUrl;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
@@ -20,6 +21,7 @@ public class RoleResp {
     private String roleDesc;
 
     @Schema(description = "角色头像")
+    @SignedFileUrl
     private String avatar;
 
     @Schema(description = "语音名称")
@@ -63,6 +65,9 @@ public class RoleResp {
 
     @Schema(description = "语音活动检测-静音毫秒数")
     private Integer vadSilenceMs;
+
+    @Schema(description = "会话空闲自动结束秒数，0表示关闭")
+    private Integer inactiveTimeoutSeconds;
 
     @Schema(description = "模型提供商")
     private String modelProvider;

@@ -12,6 +12,7 @@ import org.springframework.util.Assert;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -36,6 +37,12 @@ public class ChatModelFactory {
      */
     private final Map<String, ChatModelProvider> providers;
 
+    /** key 见 cacheKey()，配置或角色参数变更时失效 */
+    private final Map<String, ChatModel> chatModelCache = new ConcurrentHashMap<>();
+
+    /** key 为 configId，配置变更时失效 */
+    private final Map<Integer, EmbeddingModel> embeddingModelCache = new ConcurrentHashMap<>();
+
     @Autowired
     private ObservationRegistry registry;
     /**
@@ -56,9 +63,26 @@ public class ChatModelFactory {
         RoleBO effectiveRole = role != null ? role : new RoleBO();
         Integer modelId = effectiveRole.getModelId();
         Assert.notNull(modelId, "配置ID不能为空");
-        // 根据配置ID查询配置
-        ConfigBO config = configLookup.getConfig(modelId);
-        return createChatModel(config, effectiveRole);
+        // 每轮重建会连带新建 HttpClient，等于每次对话都重新做一次 TCP+TLS 握手。
+        // temperature/topP 烘焙在模型的 defaultOptions 里，必须进 key，否则改了角色参数不生效
+        String cacheKey = cacheKey(modelId, effectiveRole);
+        return chatModelCache.computeIfAbsent(cacheKey,
+                k -> createChatModel(configLookup.getConfig(modelId), effectiveRole));
+    }
+
+    static String cacheKey(Integer modelId, RoleBO role) {
+        return modelId + ":" + role.getTemperature() + ":" + role.getTopP();
+    }
+
+    /**
+     * 配置变更后必须失效：configId 不变但 apiKey/endpoint/模型名可能已经改了
+     */
+    public void removeCache(Integer configId) {
+        if (configId == null) {
+            return;
+        }
+        chatModelCache.keySet().removeIf(key -> key.startsWith(configId + ":"));
+        embeddingModelCache.remove(configId);
     }
 
     public ChatModel getVisionModel() {
@@ -75,9 +99,11 @@ public class ChatModelFactory {
 
     public EmbeddingModel getEmbeddingModel(Integer configId) {
         Assert.notNull(configId, "配置ID不能为空");
-        ConfigBO config = configLookup.getConfig(configId);
-        Assert.notNull(config, "未找到配置, configId=" + configId);
-        return getEmbeddingModel(config);
+        return embeddingModelCache.computeIfAbsent(configId, id -> {
+            ConfigBO config = configLookup.getConfig(id);
+            Assert.notNull(config, "未找到配置, configId=" + id);
+            return getEmbeddingModel(config);
+        });
     }
 
     public EmbeddingModel getEmbeddingModel(ConfigBO config) {
@@ -102,7 +128,7 @@ public class ChatModelFactory {
      * @param role 角色配置
      * @return ChatModel实例
      */
-    private ChatModel createChatModel(ConfigBO config, RoleBO role) {
+    public ChatModel createChatModel(ConfigBO config, RoleBO role) {
         String providerName = config.getProvider().toLowerCase();
         
         // 从providers Map中获取对应的Provider

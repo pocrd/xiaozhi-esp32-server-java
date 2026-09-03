@@ -4,11 +4,13 @@ import { message as antMessage, Modal } from 'ant-design-vue'
 import { useI18n } from 'vue-i18n'
 import type { FormInstance, TableColumnsType } from 'ant-design-vue'
 import { useConfigManager } from '@/composables/useConfigManager'
+import { useUserStore } from '@/store/user'
 import TableActionButtons from '@/components/TableActionButtons.vue'
 import type { ConfigType, Config, ConfigField } from '@/types/config'
-import { addConfig, updateConfig } from '@/services/config'
+import { addConfig, updateConfig, testConfig } from '@/services/config'
 
 const { t } = useI18n()
+const userStore = useUserStore()
 
 interface Props {
   configType: ConfigType
@@ -48,7 +50,8 @@ const formData = ref<Partial<Config>>({
   provider: undefined,
   configName: undefined,
   configDesc: undefined,
-  modelType: 'chat',
+  // modelType 仅对 llm 有意义（chat/vision/intent/embedding）；其他类型不应携带，避免写入脏值
+  modelType: props.configType === 'llm' ? 'chat' : undefined,
   isDefault: false,
   apiKey: undefined,
   apiUrl: undefined,
@@ -160,6 +163,16 @@ function handleModelTypeChange(value: string) {
 }
 
 /**
+ * apiUrl 输入框后缀提示：向量模型使用 embeddings 端点，而非 chat/completions
+ */
+function getFieldSuffix(field: ConfigField) {
+  if (field.name === 'apiUrl' && formData.value.modelType === 'embedding' && field.suffix?.endsWith('/chat/completions')) {
+    return field.suffix.replace(/\/chat\/completions$/, '/embeddings')
+  }
+  return field.suffix
+}
+
+/**
  * 处理标签页切换
  */
 function handleTabChange(key: string) {
@@ -182,6 +195,8 @@ function handleEdit(record: Config) {
   // 设置表单值，将后端的 string ('0'/'1') 转换为 boolean
   formData.value = {
     ...record,
+    // modelType 仅 llm 使用；非 llm 一律清空，避免把历史脏值再次提交
+    modelType: props.configType === 'llm' ? (record.modelType || 'chat') : undefined,
     isDefault: props.configType != 'tts' ? record.isDefault === '1' : false,
     enableThinking: !!record.enableThinking,
   }
@@ -189,6 +204,48 @@ function handleEdit(record: Config) {
   // LLM 更新模型选项
   if (props.configType === 'llm') {
     updateModelOptions(record.provider, record.modelType || 'chat')
+  }
+}
+
+// 测试连接中
+const testing = ref(false)
+
+/**
+ * 测试配置（使用当前表单值，无需先保存）
+ */
+async function handleTest() {
+  if (!formRef.value) return
+
+  try {
+    await formRef.value.validate()
+
+    const submitData: Partial<Config> = {
+      ...formData.value,
+      configId: editingConfigId.value,
+      configType: props.configType,
+    }
+    submitData.isDefault = formData.value.isDefault == '1' ? '1' : '0'
+
+    testing.value = true
+    const res = await testConfig(submitData)
+
+    if (res.code === 200) {
+      Modal.success({
+        title: t('config.testSuccess'),
+        content: res.message,
+      })
+    } else {
+      Modal.error({
+        title: t('config.testFailed'),
+        content: res.message,
+      })
+    }
+  } catch (error: unknown) {
+    if (error && typeof error === 'object' && 'errorFields' in error) {
+      antMessage.error(t('config.fillRequiredFields'))
+    }
+  } finally {
+    testing.value = false
   }
 }
 
@@ -228,11 +285,16 @@ async function handleSubmit() {
       // 如果模型名称不存在，则提示用户是否继续
       if (!isValid && validModels.length > 0) {
         try {
-          await Modal.confirm({
-            title: t('common.confirmSubmit'),
-            content: t('config.modelNameInvalid', { name: submitData.configName }),
-            okText: t('common.confirm'),
-            cancelText: t('common.cancel'),
+          // Modal.confirm 本身不返回可 await 的 Promise，需手动包装 onOk/onCancel
+          await new Promise<void>((resolve, reject) => {
+            Modal.confirm({
+              title: t('common.confirmSubmit'),
+              content: t('config.modelNameInvalid', { name: submitData.configName }),
+              okText: t('common.confirm'),
+              cancelText: t('common.cancel'),
+              onOk: () => resolve(),
+              onCancel: () => reject(new Error('cancelled')),
+            })
           })
           // 用户点击确认，继续执行
         } catch {
@@ -280,7 +342,8 @@ function resetForm() {
     provider: undefined,
     configName: undefined,
     configDesc: undefined,
-    modelType: 'chat',
+    // modelType 仅对 llm 有意义，其他类型保持 undefined 不提交
+    modelType: props.configType === 'llm' ? 'chat' : undefined,
     isDefault: false,
     apiKey: undefined,
     apiUrl: undefined,
@@ -469,7 +532,7 @@ fetchData()
 
         <!-- 创建/编辑标签页 -->
         <a-tab-pane
-          v-permission="editingConfigId ? `${configTypeInfo.permissionPrefix}:update` : `${configTypeInfo.permissionPrefix}:create`"
+          v-if="userStore.hasPermission(editingConfigId ? `${configTypeInfo.permissionPrefix}:update` : `${configTypeInfo.permissionPrefix}:create`)"
           key="2"
           :tab="editingConfigId ? `${t('config.update', { type: t(configTypeInfo.label) })}` : `${t('config.create')} ${t(configTypeInfo.label)}`"
         >
@@ -643,7 +706,7 @@ fetchData()
                       :type="field.inputType || 'text'"
                     >
                       <template v-if="field.suffix" #suffix>
-                        <span style="color: var(--ant-color-text-tertiary)">{{ field.suffix }}</span>
+                        <span style="color: var(--ant-color-text-tertiary)">{{ getFieldSuffix(field) }}</span>
                       </template>
                     </a-input>
                     <div v-if="field.help" class="field-help">
@@ -667,6 +730,9 @@ fetchData()
                   @click="handleSubmit"
                 >
                   {{ editingConfigId ? t('config.update', { type: t(configTypeInfo.label) }) : t('config.create', { type: t(configTypeInfo.label) }) }}
+                </a-button>
+                <a-button v-if="props.configType === 'llm'" :loading="testing" @click="handleTest">
+                  {{ t('config.test') }}
                 </a-button>
                 <a-button @click="handleCancel">{{ t('common.cancel') }}</a-button>
               </a-space>

@@ -12,10 +12,15 @@ import com.xiaozhi.common.model.req.RoleCreateReq;
 import com.xiaozhi.common.model.req.RolePageReq;
 import com.xiaozhi.common.model.req.RoleUpdateReq;
 import com.xiaozhi.common.model.req.TestVoiceReq;
+import com.xiaozhi.common.model.resp.PageResp;
+import com.xiaozhi.common.model.resp.RoleResp;
+import com.xiaozhi.common.model.resp.TestVoiceResp;
 import com.xiaozhi.common.web.ApiResponse;
 import com.xiaozhi.ai.tts.TtsServiceFactory;
 import com.xiaozhi.common.model.bo.ConfigBO;
 import com.xiaozhi.config.service.ConfigService;
+import com.xiaozhi.storage.service.StorageService;
+import com.xiaozhi.storage.service.StorageServiceFactory;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,6 +30,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 角色管理
@@ -51,6 +58,9 @@ public class RoleController extends BaseController {
     @Resource
     private ConfigService configService;
 
+    @Resource
+    private StorageServiceFactory storageServiceFactory;
+
     /**
      * 角色查询
      *
@@ -61,7 +71,7 @@ public class RoleController extends BaseController {
     @ResponseBody
     @SaCheckPermission("system:role:api:list")
     @Operation(summary = "根据条件查询角色信息", description = "返回角色信息列表")
-    public ApiResponse<?> list(@Valid RolePageReq req) {
+    public ApiResponse<PageResp<RoleResp>> list(@Valid RolePageReq req) {
         return ApiResponse.success(roleAppService.page(req, StpUtil.getLoginIdAsInt()));
     }
 
@@ -81,7 +91,7 @@ public class RoleController extends BaseController {
     @CheckOwner(resource = "config", id = "#param.sttId != null && #param.sttId > 0 ? #param.sttId : null")
     @CheckOwner(resource = "config", id = "#param.ttsId != null && #param.ttsId > 0 ? #param.ttsId : null")
     @Operation(summary = "更新角色信息", description = "更新语音助手角色配置")
-    public ApiResponse<?> update(@PathVariable Integer roleId, @Valid @RequestBody RoleUpdateReq param) {
+    public ApiResponse<RoleResp> update(@PathVariable Integer roleId, @Valid @RequestBody RoleUpdateReq param) {
         return ApiResponse.success(roleAppService.update(roleId, param));
     }
 
@@ -98,7 +108,7 @@ public class RoleController extends BaseController {
     @CheckOwner(resource = "config", id = "#param.sttId != null && #param.sttId > 0 ? #param.sttId : null")
     @CheckOwner(resource = "config", id = "#param.ttsId != null && #param.ttsId > 0 ? #param.ttsId : null")
     @Operation(summary = "添加角色信息", description = "添加新的语音助手角色")
-    public ApiResponse<?> create(@Valid @RequestBody RoleCreateReq param) {
+    public ApiResponse<RoleResp> create(@Valid @RequestBody RoleCreateReq param) {
         return ApiResponse.success(roleAppService.create(param, StpUtil.getLoginIdAsInt()));
     }
 
@@ -114,7 +124,7 @@ public class RoleController extends BaseController {
     @CheckOwner(resource = "role", id = "#roleId")
     @AuditLog(module = "角色管理", operation = "删除角色")
     @Operation(summary = "删除角色信息", description = "删除指定的语音助手角色")
-    public ApiResponse<?> delete(@PathVariable Integer roleId) {
+    public ApiResponse<Void> delete(@PathVariable Integer roleId) {
         roleAppService.delete(roleId);
         return ApiResponse.success("删除成功");
     }
@@ -126,7 +136,7 @@ public class RoleController extends BaseController {
     @ResponseBody
     @SaCheckPermission("system:role:api:list")
     @Operation(summary = "获取本地 sherpa-onnx 音色列表", description = "扫描配置的本地 TTS 模型目录，自动识别模型类型和 speaker")
-    public ApiResponse<?> listSherpaVoices() {
+    public ApiResponse<List<Map<String, Object>>> listSherpaVoices() {
         return ApiResponse.success(sherpaVoiceService.listVoices());
     }
 
@@ -135,7 +145,7 @@ public class RoleController extends BaseController {
     @SaCheckPermission("system:role:api:list")
     @CheckOwner(resource = "config", id = "#param.provider != 'edge' ? #param.ttsId : null")
     @Operation(summary = "测试语音合成", description = "测试指定配置的语音合成效果")
-    public ApiResponse<?> testAudio(@Valid TestVoiceReq param) {
+    public ApiResponse<TestVoiceResp> testAudio(@Valid TestVoiceReq param) {
         ConfigBO config = null;
         if (!param.getProvider().equals("edge")) {
             if (param.getTtsId() == null) {
@@ -151,7 +161,16 @@ public class RoleController extends BaseController {
             Path audioFilePath = ttsService.getTtsService(config, param.getVoiceName(), param.getTtsPitch(), param.getTtsSpeed())
                     .textToSpeech(param.getMessage());
 
-            return ApiResponse.success("操作成功", audioFilePath != null ? audioFilePath.toString() : null);
+            if (audioFilePath == null) {
+                throw new OperationFailedException("测试语音合成失败：未生成音频");
+            }
+
+            // 上传到当前生效的存储服务：本地返回相对路径，云存储返回完整 URL 并接管本地文件。
+            // 返回值经 @SignedFileUrl 由响应 Advice 统一签名，故本地/云端配置均生效。
+            StorageService storageService = storageServiceFactory.getStorageService();
+            String storedPath = storageService.upload(audioFilePath, audioFilePath.toString());
+
+            return ApiResponse.success("操作成功", new TestVoiceResp(storedPath));
         } catch (IndexOutOfBoundsException e) {
             log.error(e.getMessage(), e);
             throw new IllegalStateException("请先到语音合成配置页面配置对应Key", e);

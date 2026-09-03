@@ -65,7 +65,7 @@ public class FileUploadController {
     @ResponseBody
     @SaCheckPermission("system:file:api:upload")
     @Operation(summary = "文件上传", description = "如果有配置腾讯云对象存储的话默认会存储到对象存储中")
-    public ApiResponse<?> uploadFile(
+    public ApiResponse<Map<String, Object>> uploadFile(
             @Parameter(description = "上传的文件") @RequestParam("file") MultipartFile file,
             @Parameter(description = "文件类型") @RequestParam(value = "type", required = false, defaultValue = "common") String type) {
 
@@ -125,7 +125,8 @@ public class FileUploadController {
 
         // 判断是否是完整 URL（云存储返回 https URL，本地返回相对路径）
         if (filePathOrUrl.startsWith("http://") || filePathOrUrl.startsWith("https://")) {
-            data.put("url", filePathOrUrl);
+            // 云存储私有桶下裸 URL 无法直接访问，返回带签名的临时 URL 供前端即时预览
+            data.put("url", storageService.getAccessUrl(filePathOrUrl));
         } else {
             String fullUrl = serverAddressProvider.getServerAddress() + "/" + filePathOrUrl;
             data.put("url", fullUrl);

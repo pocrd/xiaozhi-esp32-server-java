@@ -7,11 +7,13 @@ import com.xiaozhi.common.model.bo.VerifyCodeBO;
 import com.xiaozhi.common.model.req.DeviceBatchUpdateReq;
 import com.xiaozhi.common.model.req.DeviceCreateReq;
 import com.xiaozhi.common.model.req.DevicePageReq;
+import com.xiaozhi.common.model.req.DeviceScanBindReq;
 import com.xiaozhi.common.model.req.DeviceUpdateReq;
 import com.xiaozhi.common.model.req.OtaReq;
 import com.xiaozhi.common.model.resp.DeviceResp;
 import com.xiaozhi.common.model.resp.PageResp;
 import com.xiaozhi.communication.ServerAddressProvider;
+import com.xiaozhi.communication.auth.DeviceAuthService;
 import com.xiaozhi.communication.registry.DialogueServerInfo;
 import com.xiaozhi.communication.registry.DialogueServerRegistry;
 import com.xiaozhi.device.convert.DeviceConvert;
@@ -66,6 +68,15 @@ public class DeviceAppService {
     @Resource
     private DialogueServerRegistry dialogueServerRegistry;
 
+    @Resource
+    private DeviceAuthService deviceAuthService;
+
+    /**
+     * 下发给设备的 WebSocket 二进制帧版本：v2 带时间戳，是服务端 AEC 回声对齐的前提
+     */
+    @Value("${xiaozhi.communication.websocket-protocol-version:2}")
+    private int websocketProtocolVersion;
+
 
     public PageResp<DeviceResp> page(DevicePageReq req, Integer userId) {
         DevicePageReq r = req == null ? new DevicePageReq() : req;
@@ -108,6 +119,56 @@ public class DeviceAppService {
         DeviceResp result = deviceService.get(device.getDeviceId());
         if (result == null) throw new IllegalStateException("添加设备失败");
         return result;
+    }
+
+    /**
+     * 扫码绑定：通过设备二维码中的设备ID（MAC 地址）直接绑定到当前用户。
+     * <p>
+     * 防抢绑：贴纸二维码是静态的，任何拿到码的人都能发起绑定，因此要求设备
+     * "近期在线"——未绑定设备开机联网（OTA 上报或建立会话）时会生成验证码，
+     * 10 分钟内存在有效验证码即视为设备在用户手上。
+     */
+    @Transactional
+    public DeviceResp scanBind(DeviceScanBindReq req, Integer userId) {
+        String deviceId = normalizeDeviceId(req.getDeviceId());
+        if (!CommonUtils.isMacAddressValid(deviceId)) {
+            throw new IllegalArgumentException("设备ID不正确");
+        }
+
+        // 设备已存在：幂等返回（同一用户）或抛出冲突
+        java.util.Optional<Device> existingDevice = deviceRepository.findById(deviceId);
+        if (existingDevice.isPresent()) {
+            Device d = existingDevice.get();
+            if (userId != null && userId.equals(d.getUserId())) {
+                DeviceResp result = deviceService.get(d.getDeviceId());
+                if (result == null) throw new IllegalStateException("查询设备失败");
+                return result;
+            }
+            throw new IllegalStateException("设备已被其他用户绑定");
+        }
+
+        VerifyCode verifyCode = deviceRepository.findVerifyCode(null, deviceId, null)
+                .orElseThrow(() -> new IllegalStateException("设备不在线，请先将设备开机联网后再扫码"));
+
+        RoleBO selectedRole = roleService.getDefaultOrFirstBO(userId);
+        if (selectedRole == null) {
+            throw new IllegalStateException("没有配置角色");
+        }
+
+        String name = StringUtils.hasText(verifyCode.type()) ? verifyCode.type() : "小智";
+        Device device = Device.newDevice(deviceId, name, verifyCode.type(),
+                userId, selectedRole.getRoleId());
+        deviceRepository.save(device);
+        deviceRepository.invalidateVerifyCodes(deviceId);
+
+        DeviceResp result = deviceService.get(device.getDeviceId());
+        if (result == null) throw new IllegalStateException("添加设备失败");
+        return result;
+    }
+
+    /** 归一化二维码中的 MAC：贴纸可能印大写或 '-' 分隔，设备上报为小写冒号格式 */
+    private String normalizeDeviceId(String raw) {
+        return raw == null ? "" : raw.trim().replace('-', ':').toLowerCase();
     }
 
     @Transactional
@@ -226,6 +287,14 @@ public class DeviceAppService {
             "timezone_offset", 480
         ));
 
+        DialogueServerInfo selectedServer = null;
+        try {
+            selectedServer = dialogueServerRegistry.selectServer();
+        } catch (RuntimeException e) {
+            log.warn("选择对话服务器失败，回退默认地址, deviceId={}", deviceId, e);
+        }
+        String websocketAddress = selectedServer != null ? selectedServer.getWebsocketAddress() : serverAddressProvider.getWebsocketAddress();
+
         if (boundDevice == null) {
             log.info("mTLS 设备未绑定，自动注册：deviceId={}, ip={}", deviceId, req.getIp());
 
@@ -245,17 +314,10 @@ public class DeviceAppService {
             throw new IllegalStateException("添加设备失败");
         } else {
             // --- 已绑定设备：返回通信地址 ---
-            DialogueServerInfo selectedServer = null;
-            try {
-                selectedServer = dialogueServerRegistry.selectServer();
-            } catch (RuntimeException e) {
-                log.warn("选择对话服务器失败，回退默认地址, deviceId={}", deviceId, e);
-            }
-            String websocketAddress = selectedServer != null ? selectedServer.getWebsocketAddress() : serverAddressProvider.getWebsocketAddress();
-
             Map<String, Object> websocketData = new HashMap<>();
             websocketData.put("url", websocketAddress);
-            websocketData.put("token", "");
+            websocketData.put("token", deviceAuthService.generateDeviceToken(deviceId));
+            websocketData.put("version", websocketProtocolVersion);
             otaResponse.put("websocket", websocketData);
 
             // --- 同步设备信息 ---

@@ -152,7 +152,7 @@ public class SummaryConversation extends Conversation {
             needSummaryMessages = new ArrayList<>(messages.subList(0, actualBatchSize));
             summarizing = true;
         }
-        log.info("current conversation message size:{}, batch size to summary:{}", size, actualBatchSize);
+        log.info("{}的对话累计{}条，取前{}条提取长期记忆", getOwnerId(), size, actualBatchSize);
         Thread.startVirtualThread(() -> summaryMessages(needSummaryMessages));
     }
 
@@ -180,13 +180,13 @@ public class SummaryConversation extends Conversation {
 
         try {
             // 3. Call the model.
-            log.info("调用大模型进行摘要：{}", factExtractPrompt);
+            log.debug("长期记忆提取提示词：{}", factExtractPrompt);
 
             String factExtract = chatClient.prompt()
                     .user(factExtractPrompt)
                     .call()
                     .content();
-            log.info("大模型从对话里提取用户重要备忘: {}", factExtract);
+            log.info("{}的长期记忆提取结果: {}", getOwnerId(), factExtract);
 
             // 4. 入库存储。
             SummaryBO newSummary = new SummaryBO()
@@ -197,19 +197,34 @@ public class SummaryConversation extends Conversation {
                     .setCreateTime(Instant.now());
             chatMemory.save(newSummary);
 
+            int removed;
             synchronized (summaryLock) {
-                // 5. 移除已处理的消息
-                messages.removeAll(needSummaryMessages);
+                // 5. 移除已处理的消息，按引用匹配，内容相同的其它消息不受影响
+                removed = removeByIdentity(needSummaryMessages);
                 this.lastSummary = newSummary;
                 summarizing = false;
             }
-            summarize();
+            // 一条都没移除时不再递归，避免同一批次反复摘要
+            if (removed > 0) {
+                summarize();
+            }
         } catch (Exception e) {
             log.error("{}对话摘要失败", getOwnerId(), e);
             synchronized (summaryLock) {
                 summarizing = false;
             }
         }
+    }
+
+    /**
+     * 按引用从历史中移除指定消息，返回实际移除的条数。
+     */
+    private int removeByIdentity(List<Message> targets) {
+        int before = messages.size();
+        for (Message target : targets) {
+            messages.removeIf(message -> message == target);
+        }
+        return before - messages.size();
     }
 
     public List<Message> messages(ConversationContext context) {
@@ -221,10 +236,7 @@ public class SummaryConversation extends Conversation {
         }
         // 新消息列表对象，避免使用过程中污染原始列表对象
         List<Message> historyMessages = new ArrayList<>();
-        var roleSystemMessage = roleSystemMessage(context);
-        if(roleSystemMessage.isPresent()){
-            historyMessages.add(roleSystemMessage.get());
-        }
+        historyMessages.add(roleSystemMessage(context));
         if(summarySnapshot != null && StringUtils.hasText(summarySnapshot.getSummary())){
             // 多条SystemMessage在主流模型（OpenAI、Qwen、DeepSeek）中均已验证可用
             historyMessages.add(new SystemMessage("下面是你与用户最近聊天内容的摘要：\n" + summarySnapshot.getSummary()));

@@ -2,6 +2,9 @@ package com.xiaozhi.ai.llm.memory;
 
 import lombok.Getter;
 import org.springframework.ai.chat.messages.*;
+import org.springframework.ai.chat.prompt.PromptTemplate;
+import org.springframework.ai.template.st.StTemplateRenderer;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
@@ -19,6 +22,11 @@ import java.util.*;
  *
  */
 public class Conversation extends ConversationIdentifier {
+    /** 角色系统提示词模板，占位符 $role_section$、$location_line$ */
+    private static final PromptTemplate ROLE_SYSTEM_PROMPT_TEMPLATE = PromptTemplate.builder()
+            .renderer(StTemplateRenderer.builder().startDelimiterToken('$').endDelimiterToken('$').build())
+            .resource(new ClassPathResource("/prompts/role_system_prompt.md", Conversation.class))
+            .build();
 
     @Getter
     private final String roleDesc;
@@ -49,34 +57,22 @@ public class Conversation extends ConversationIdentifier {
         return sessionId;
     }
 
-    public Optional<SystemMessage> roleSystemMessage(ConversationContext context) {
-        StringBuilder msgBuilder = new StringBuilder();
-        if(StringUtils.hasText(roleDesc)) {
-            msgBuilder.append( "角色描述：" ).append(roleDesc).append(System.lineSeparator());
-        }
+    /**
+     * 角色系统提示词：角色设定、设备对话约束、位置。只放会话期内稳定的内容，System Prompt 会话内必须保持不变；
+     * 逐条消息的元数据（时间戳、说话人、情绪）由 UserMessageAssembler 拼在每条 UserMessage 前缀里。
+     */
+    public SystemMessage roleSystemMessage(ConversationContext context) {
+        String roleSection = StringUtils.hasText(roleDesc)
+                ? "角色设定：" + System.lineSeparator() + roleDesc + System.lineSeparator()
+                : "";
         String location = context != null ? context.location() : null;
-        if (StringUtils.hasText(location)) {
-            msgBuilder.append("当前位置：").append(location)
-                    .append("。如果用户提及现在在哪里，则以新地方为准。")
-                    .append(System.lineSeparator());
-        }
-        // 逐条消息的元数据（时间戳、说话人、情绪）由 UserMessageAssembler 拼接在每条 UserMessage 前缀里，
-        // 不在此处动态渲染，避免 System Prompt 每轮变化导致前缀 KV cache 失效。
-        msgBuilder.append(System.lineSeparator())
-            .append("用户消息可能以方括号元数据标签开头，顺序固定为：")
-            .append(System.lineSeparator())
-            .append("  1. [yyyy-MM-ddTHH:mm:ss] 本次消息发送时间（秒级精度，可用于定时任务、时间相对计算）；")
-            .append(System.lineSeparator())
-            .append("  2. [情绪标签]（如 [neutral]、[happy]）语音识别出的用户情绪，据此调整回应语气。")
-            .append(System.lineSeparator())
-            .append("请据此调整回应方式和语气，但无需在回复中提及或解释这些标签。任一标签可能缺省。")
-            .append(System.lineSeparator());
-        if(StringUtils.hasText(roleDesc)) {
-            var roleMessage = new SystemMessage(msgBuilder.toString());
-            return Optional.of(roleMessage);
-        }else{
-            return Optional.empty();
-        }
+        String locationLine = StringUtils.hasText(location)
+                ? System.lineSeparator() + "当前位置：" + location + "。用户如果说自己现在在别的地方，以用户说的为准。"
+                : "";
+        String text = ROLE_SYSTEM_PROMPT_TEMPLATE.render(Map.of(
+                "role_section", roleSection,
+                "location_line", locationLine));
+        return new SystemMessage(text.strip());
     }
 
     /**
@@ -136,6 +132,43 @@ public class Conversation extends ConversationIdentifier {
     public synchronized void addToolCallChain(AssistantMessage toolCallMsg, ToolResponseMessage toolResponse) {
         messages.add(toolCallMsg);
         messages.add(toolResponse);
+    }
+
+    /**
+     * 用截断后的消息替换原消息（按对象身份定位），原消息不在列表里则不做任何事
+     */
+    public synchronized void replace(Message original, Message replacement) {
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            if (messages.get(i) == original) {
+                messages.set(i, replacement);
+                return;
+            }
+        }
+    }
+
+    /**
+     * 把消息插到 anchor 所在轮次的末尾（下一条 UserMessage 之前）；anchor 不在列表里则追加到末尾。
+     * 用于迟到的打断收尾：该轮的用户消息之后可能已经有了新一轮消息。
+     */
+    public synchronized void insertAfterTurn(Message anchor, List<Message> toInsert) {
+        int index = messages.size();
+        for (int i = 0; i < messages.size(); i++) {
+            if (messages.get(i) == anchor) {
+                index = i + 1;
+                while (index < messages.size() && !(messages.get(index) instanceof UserMessage)) {
+                    index++;
+                }
+                break;
+            }
+        }
+        messages.addAll(index, toInsert);
+    }
+
+    /**
+     * 按对象身份移除消息
+     */
+    public synchronized void remove(Message message) {
+        messages.removeIf(m -> m == message);
     }
 
 }

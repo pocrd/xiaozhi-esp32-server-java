@@ -45,6 +45,9 @@ public class OpusRecorder {
     private Path audioPath;
     private OpusFile opusFile;
     private Instant opusFileCreatedAt;
+    // Opus granule position 累加器（48kHz 采样单位）。末页 granule 决定解码器输出样本数（end-trim），
+    // 若不累加、恒为 0，符合规范的解码器（ffmpeg / 浏览器）会裁掉整段音频，表现为时长 0 / 只放末尾。
+    private long granulePosition;
 
     @Getter
     @Setter
@@ -63,16 +66,28 @@ public class OpusRecorder {
         }
     }
 
-    public void onSendOpusFrame(byte[] opusFrame) {
-        if (aecService != null && aecService.isEnabled()) {
-            aecService.feedReference(session.getSessionId(), opusFrame);
+    public void onSendOpusFrame(byte[] opusFrame, long timestamp) {
+        if (aecService != null) {
+            aecService.feedReference(session.getSessionId(), opusFrame, timestamp);
         }
 
         if (opusFile == null && assistantMessageCreatedAt != null) {
             openOpusFile();
         }
         if (opusFile != null) {
-            opusFile.writeAudioData(new OpusAudioData(opusFrame));
+            OpusAudioData audioData = new OpusAudioData(opusFrame);
+            granulePosition += audioData.getNumberOfSamples();
+            audioData.setGranulePosition(granulePosition);
+            opusFile.writeAudioData(audioData);
+        }
+    }
+
+    /**
+     * 静音帧只作为 AEC 参考，不写入录音
+     */
+    public void onSendSilenceFrame(byte[] opusFrame, long timestamp) {
+        if (aecService != null) {
+            aecService.feedReference(session.getSessionId(), opusFrame, timestamp);
         }
     }
 
@@ -82,6 +97,7 @@ public class OpusRecorder {
 
     private void openOpusFile() {
         opusFileCreatedAt = assistantMessageCreatedAt;
+        granulePosition = 0;
         audioPath = session.getAudioPath(MessageBO.SENDER_ASSISTANT, opusFileCreatedAt);
         try {
             Files.createDirectories(audioPath.getParent());

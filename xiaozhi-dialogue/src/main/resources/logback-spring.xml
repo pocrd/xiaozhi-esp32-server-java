@@ -57,6 +57,7 @@
         <logger name="com.xiaozhi" level="DEBUG" />
         <logger name="com.xiaozhi.dialogue" level="DEBUG" />
         <logger name="com.alibaba.dashscope.protocol.okhttp" level="WARN" />
+        <logger name="io.modelcontextprotocol.client" level="INFO" />
     </springProfile>
 
     <!-- 生产环境配置 -->
@@ -69,6 +70,7 @@
         <logger name="com.xiaozhi" level="INFO" />
         <logger name="org.springframework.web" level="ERROR" />
         <logger name="com.alibaba.dashscope.protocol.okhttp" level="WARN" />
+        <logger name="io.modelcontextprotocol.client" level="INFO" />
     </springProfile>
     
     <!-- 默认配置（如果没有指定profile） -->

@@ -473,6 +473,12 @@ export default {
     deleteRoleFailed: 'Delete failed',
     createRoleSuccess: 'Create successful',
     updateRoleSuccess: 'Update successful',
+    sessionSettings: 'Session Settings',
+    inactiveAutoEnd: 'End Idle Sessions',
+    inactiveAutoEndTip: 'Play a goodbye message and end the session after a period of inactivity',
+    inactiveDuration: 'Idle Duration',
+    inactiveDurationRange: 'Enter a duration from 10 to 3600 seconds',
+    seconds: 'seconds',
     checkForm: 'Please check if the form is filled correctly',
     
     // Voice test related
@@ -537,6 +543,9 @@ export default {
 
   config: {
     llm: 'Model',
+    test: 'Test Connection',
+    testSuccess: 'Test succeeded',
+    testFailed: 'Test failed',
     stt: 'Speech Recognition',
     tts: 'Text to Speech',
     oss: 'Object Storage',
@@ -882,6 +891,19 @@ export default {
     connectFirst: 'Please select a role first',
     thinkingInProgress: 'Thinking...',
     thinkingDone: 'Thought complete',
+    thought: 'Thought',
+    thoughtDuration: ' for {seconds}s',
+    composer: {
+      addMenu: 'Add content or switch capability',
+      addImage: 'Add image',
+      attachFile: 'Attach file',
+      skills: 'Skills',
+      model: 'Current role',
+      followRole: 'Follow role configuration',
+      comingSoon: 'Coming soon',
+      stop: 'Stop generating',
+      send: 'Send',
+    },
   },
 
   memory: {
@@ -889,5 +911,6 @@ export default {
     summary: 'Summary',
     content: 'Content',
     confirmDelete: 'Are you sure to delete this memory? This operation cannot be undone.',
+    needRoleAndDevice: 'Please create a role or bind a device first',
   },
 }

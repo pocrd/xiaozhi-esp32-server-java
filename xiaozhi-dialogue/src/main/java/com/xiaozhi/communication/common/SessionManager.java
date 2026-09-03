@@ -11,7 +11,6 @@ import com.xiaozhi.event.DeviceUpdatedEvent;
 import com.xiaozhi.event.ChatSessionOpenedEvent;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.ContextClosedEvent;
@@ -65,30 +64,25 @@ public class SessionManager {
     @Resource
     private InstanceIdHolder instanceIdHolder;
 
-    @Value("${xiaozhi.check.inactive.session:true}")
-    private boolean checkInactiveSession;
-
     @PostConstruct
     public void init() {
-        if (checkInactiveSession) {
-            // 项目启动时，只重置属于本实例的设备为离线（延迟执行避免循环依赖）
-            scheduler.schedule(() -> {
-                try {
-                    Set<String> ownDeviceIds = deviceRegistry.getOwnDeviceIds();
-                    if (!ownDeviceIds.isEmpty()) {
-                        int updated = deviceRepository.batchUpdateState(ownDeviceIds, DeviceBO.DEVICE_STATE_OFFLINE);
-                        log.info("项目启动，重置本实例 {} 个设备状态为离线", updated);
-                        // 清理本实例旧的 Redis 映射
-                        for (String deviceId : ownDeviceIds) {
-                            deviceRegistry.unbind(deviceId);
-                        }
+        // 项目启动时，只重置属于本实例的设备为离线（延迟执行避免循环依赖）
+        scheduler.schedule(() -> {
+            try {
+                Set<String> ownDeviceIds = deviceRegistry.getOwnDeviceIds();
+                if (!ownDeviceIds.isEmpty()) {
+                    int updated = deviceRepository.batchUpdateState(ownDeviceIds, DeviceBO.DEVICE_STATE_OFFLINE);
+                    log.info("项目启动，重置本实例 {} 个设备状态为离线", updated);
+                    // 清理本实例旧的 Redis 映射
+                    for (String deviceId : ownDeviceIds) {
+                        deviceRegistry.unbind(deviceId);
                     }
-                    log.info("项目启动，instanceId: {}", instanceIdHolder.getInstanceId());
-                } catch (Exception e) {
-                    log.error("项目启动时重置设备状态失败", e);
                 }
-            }, 1, TimeUnit.SECONDS);
-        }
+                log.info("项目启动，instanceId: {}", instanceIdHolder.getInstanceId());
+            } catch (Exception e) {
+                log.error("项目启动时重置设备状态失败", e);
+            }
+        }, 1, TimeUnit.SECONDS);
     }
 
     public boolean isShuttingDown() {
@@ -109,6 +103,10 @@ public class SessionManager {
      * 打开音频通道并发布事件（供Handler调用）
      */
     public void openAudioChannel(String sessionId, String deviceId) {
+        ChatSession session = sessions.get(sessionId);
+        if (session != null) {
+            session.resetInactiveClosing();
+        }
         applicationContext.publishEvent(new ChatAudioOpenedEvent(this, sessionId, deviceId));
     }
 
@@ -148,7 +146,8 @@ public class SessionManager {
     public void removeSession(String sessionId) {
         ChatSession removed = sessions.remove(sessionId);
         if (removed != null && removed.getDevice() != null) {
-            deviceIdToSessionId.remove(removed.getDevice().getDeviceId());
+            // 只清自己建立的映射，设备重连后旧连接关闭不能删掉新会话的映射
+            deviceIdToSessionId.remove(removed.getDevice().getDeviceId(), sessionId);
         }
     }
 
@@ -178,6 +177,32 @@ public class SessionManager {
 
     // ========== 会话关闭 ==========
 
+    /**
+     * 连接关闭时写入设备离线状态。服务关闭期间跳过，启动时会批量重置。
+     */
+    private void updateDeviceStateOnClose(ChatSession chatSession) {
+        DeviceBO device = chatSession.getDevice();
+        if (device == null || isShuttingDown()) {
+            return;
+        }
+        String sessionId = chatSession.getSessionId();
+        String deviceId = device.getDeviceId();
+        String newState = DeviceBO.DEVICE_STATE_OFFLINE;
+        Thread.startVirtualThread(() -> {
+            try {
+                // 设备已在新连接上重连时不覆盖新会话的状态
+                ChatSession currentSession = getSessionByDeviceId(deviceId);
+                if (currentSession != null && !sessionId.equals(currentSession.getSessionId())) {
+                    return;
+                }
+                deviceRepository.updateState(deviceId, newState);
+                log.info("连接已关闭 - SessionId: {}, DeviceId: {}, 新状态: {}", sessionId, deviceId, newState);
+            } catch (Exception e) {
+                log.error("更新设备状态失败", e);
+            }
+        });
+    }
+
     public void closeSession(String sessionId) {
         ChatSession chatSession = sessions.get(sessionId);
         if (chatSession != null) {
@@ -190,12 +215,20 @@ public class SessionManager {
             return;
         }
         try {
+            // 状态写库要赶在会话被摘出注册表之前，否则设备主动 goodbye、超时关闭、
+            // 退出意图这几条路径的连接回调都取不到会话，离线状态永远写不进去
+            updateDeviceStateOnClose(chatSession);
             if (chatSession instanceof WebSocketSession) {
                 removeSession(chatSession.getSessionId());
             }
             // 解除设备-实例绑定
             if (chatSession.getDevice() != null) {
-                deviceRegistry.unbind(chatSession.getDevice().getDeviceId());
+                String deviceId = chatSession.getDevice().getDeviceId();
+                ChatSession bound = getSessionByDeviceId(deviceId);
+                // 设备已在新连接上重连时绑定归新会话，旧连接收尾不能解掉
+                if (bound == null || bound.getSessionId().equals(chatSession.getSessionId())) {
+                    deviceRegistry.unbind(deviceId);
+                }
             }
             if (chatSession.isAudioChannelOpen()) {
                 chatSession.close();

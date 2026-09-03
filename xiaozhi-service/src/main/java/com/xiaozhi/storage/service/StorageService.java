@@ -9,7 +9,7 @@ import java.nio.file.Path;
  * 对象存储服务接口。
  * 通过 {@link StorageServiceFactory} 获取当前生效的实现。
  * <p>
- * 支持本地文件存储和多云 OSS（腾讯云 COS、阿里云 OSS）。
+ * 支持本地文件存储和多云 OSS（腾讯云 COS、阿里云 OSS、S3 兼容如 MinIO）。
  * 配置通过 sys_config 表（configType="oss"）管理，前端管理员可在设置页面选择存储方式。
  */
 public interface StorageService {
@@ -56,6 +56,28 @@ public interface StorageService {
      * 检查文件是否存在
      */
     boolean exists(String storedPath);
+
+    /**
+     * 将存储路径转为可访问 URL。
+     * <p>
+     * 云端私有桶返回带签名的临时 URL（有时效），本地存储原样返回相对路径。
+     * 对空值、无法识别为本存储对象的值（如外链、本地路径）原样返回。
+     *
+     * @param storedPath {@link #upload} 返回并持久化的路径
+     * @return 可直接访问的 URL
+     */
+    String getAccessUrl(String storedPath);
+
+    /**
+     * 去除签名参数，还原为可持久化的裸地址。
+     * <p>
+     * 入库前调用：把前端回传的带签名临时 URL 还原成原始裸 URL，避免过期签名写入数据库。
+     * 云端截断 query 串后返回；本地路径、外链、空值原样返回。
+     *
+     * @param url 可能带签名参数的 URL
+     * @return 去掉签名参数的裸地址
+     */
+    String stripSignature(String url);
 
     /**
      * 获取 provider 名称，用于 Factory 路由

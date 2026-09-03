@@ -3,7 +3,20 @@
  * 统一管理各类服务的提供商信息，便于维护和扩展
  */
 
-import type { ConfigTypeInfo } from '@/types/config'
+import type { ConfigField, ConfigTypeInfo } from '@/types/config'
+
+/**
+ * S3 兼容对象存储的通用字段。
+ * MinIO / Cloudflare R2 / Backblaze B2 / 华为 OBS / Wasabi / DigitalOcean Spaces / 七牛 Kodo 等
+ * 底层都走后端同一个 S3StorageService，仅 Endpoint 提示不同，故共用此函数生成字段。
+ */
+const s3CompatibleFields = (endpointPlaceholder: string, endpointHelp: string): ConfigField[] => [
+  { name: 'apiUrl', label: 'Endpoint', required: true, inputType: 'text', span: 12, help: endpointHelp, placeholder: endpointPlaceholder },
+  { name: 'ak', label: 'Access Key', required: true, inputType: 'password', span: 12, help: 'Access Key / AccessKey ID', placeholder: 'access-key' },
+  { name: 'sk', label: 'Secret Key', required: true, inputType: 'password', span: 12, help: '对应 Access Key 的密钥', placeholder: 'secret-key' },
+  { name: 'configName', label: 'Bucket', required: true, inputType: 'text', span: 12, help: '存储桶名称', placeholder: 'my-bucket' },
+  { name: 'appId', label: 'Region', required: false, inputType: 'text', span: 12, help: '区域，可留空（默认 us-east-1）', placeholder: 'us-east-1' },
+]
 
 // 配置类型信息映射
 export const configTypeMap: Record<string, ConfigTypeInfo> = {
@@ -932,16 +945,17 @@ export const configTypeMap: Record<string, ConfigTypeInfo> = {
     label: 'config.stt',
     permissionPrefix: 'system:config',
     typeOptions: [
-      { label: 'Tencent', value: 'tencent', key: '0' },
+      { label: 'Tencent Cloud', value: 'tencent', key: '0' },
       {
-        label: 'Aliyun（DashScope）',
+        label: 'Aliyun (DashScope)',
         value: 'aliyun',
         key: '1',
+        // 8k 系列服务端会自动降采样后再送；paraformer-realtime-8k-v2 是唯一支持情感识别的 Paraformer 模型
         configNameOptions: [
-          'paraformer-realtime-8k-v2',
-          'paraformer-realtime-8k-v1',
           'paraformer-realtime-v2',
           'paraformer-realtime-v1',
+          'paraformer-realtime-8k-v2',
+          'paraformer-realtime-8k-v1',
           'fun-asr-realtime',
           'fun-asr-realtime-2025-11-07',
           'fun-asr-realtime-2025-09-15',
@@ -952,10 +966,10 @@ export const configTypeMap: Record<string, ConfigTypeInfo> = {
           'qwen3-asr-flash-realtime',
         ]
       },
-      { label: 'Aliyun（NLS标准版）', value: 'aliyun-nls', key: '2' },
-      { label: 'Xfyun', value: 'xfyun', key: '3' },
+      { label: 'Aliyun (NLS)', value: 'aliyun-nls', key: '2' },
+      { label: 'XunFei', value: 'xfyun', key: '3' },
       { label: 'FunASR', value: 'funasr', key: '4' },
-      { label: 'Volcengine（doubao）', value: 'volcengine', key: '5' }
+      { label: 'VolcEngine (Doubao)', value: 'volcengine', key: '5' }
     ],
     typeFields: {
       tencent: [
@@ -1059,22 +1073,14 @@ export const configTypeMap: Record<string, ConfigTypeInfo> = {
         }
       ],
       volcengine: [
-        { 
-          name: 'appId', 
-          label: 'App ID', 
-          required: true, 
-          span: 12,
-          help: '在 https://console.volcengine.com/speech/app 获取应用ID',
-          placeholder: 'your-app-id'
-        },
-        { 
-          name: 'apiKey', 
-          label: 'Access Token', 
-          required: true, 
+        {
+          name: 'apiKey',
+          label: 'API Key',
+          required: true,
           inputType: 'password',
           span: 12,
-          help: '火山引擎语音识别服务访问令牌',
-          placeholder: 'your-access-token'
+          help: '在新版控制台 > API Key 管理获取（注意不是旧版控制台的 Access Token）',
+          placeholder: 'your-api-key'
         }
       ]
     }
@@ -1083,13 +1089,13 @@ export const configTypeMap: Record<string, ConfigTypeInfo> = {
     label: 'config.tts',
     permissionPrefix: 'system:config',
     typeOptions: [
-      { label: 'Tencent', value: 'tencent', key: '0' },
-      { label: 'Aliyun', value: 'aliyun', key: '1' },
-      { label: 'Aliyun NLS', value: 'aliyun-nls', key: '2' },
-      { label: 'Volcengine(doubao)', value: 'volcengine', key: '3' },
-      { label: 'Xfyun', value: 'xfyun', key: '4' },
-      { label: 'Minimax', value: 'minimax', key: '5' },
-      { label: 'Sherpa-ONNX（本地）', value: 'sherpa-onnx', key: '6' }
+      { label: 'Tencent Cloud', value: 'tencent', key: '0' },
+      { label: 'Aliyun (DashScope)', value: 'aliyun', key: '1' },
+      { label: 'Aliyun (NLS)', value: 'aliyun-nls', key: '2' },
+      { label: 'VolcEngine (Doubao)', value: 'volcengine', key: '3' },
+      { label: 'XunFei', value: 'xfyun', key: '4' },
+      { label: 'MiniMax', value: 'minimax', key: '5' },
+      { label: 'Sherpa-ONNX', value: 'sherpa-onnx', key: '6' }
     ],
     typeFields: {
       tencent: [
@@ -1156,21 +1162,13 @@ export const configTypeMap: Record<string, ConfigTypeInfo> = {
         }
       ],
       volcengine: [
-        { 
-          name: 'appId', 
-          label: 'App Id', 
-          required: true, 
+        {
+          name: 'apiKey',
+          label: 'API Key',
+          required: true,
           span: 12,
-          help: '在 https://console.volcengine.com/speech/app 申请',
-          placeholder: 'your-app-id'
-        },
-        { 
-          name: 'apiKey', 
-          label: 'Access Token', 
-          required: true, 
-          span: 12,
-          help: '火山引擎语音合成服务访问令牌',
-          placeholder: 'your-access-token'
+          help: '在新版控制台 > API Key 管理获取（注意不是旧版控制台的 Access Token）',
+          placeholder: 'your-api-key'
         }
       ],
       xfyun: [
@@ -1224,9 +1222,17 @@ export const configTypeMap: Record<string, ConfigTypeInfo> = {
     label: 'config.oss',
     permissionPrefix: 'system:config',
     typeOptions: [
-      { label: '本地存储', value: 'local', key: '0' },
-      { label: '腾讯云 COS', value: 'tencent', key: '1' },
-      { label: '阿里云 OSS', value: 'aliyun', key: '2' }
+      { label: 'Local', value: 'local', key: '0' },
+      { label: 'Tencent Cloud (COS)', value: 'tencent', key: '1' },
+      { label: 'Aliyun (OSS)', value: 'aliyun', key: '2' },
+      { label: 'MinIO', value: 'minio', key: '3' },
+      { label: 'Cloudflare R2', value: 'r2', key: '4' },
+      { label: 'Backblaze B2', value: 'b2', key: '5' },
+      { label: '华为云 OBS', value: 'huawei-obs', key: '6' },
+      { label: 'Wasabi', value: 'wasabi', key: '7' },
+      { label: 'DigitalOcean Spaces', value: 'do-spaces', key: '8' },
+      { label: '七牛云 Kodo', value: 'qiniu', key: '9' },
+      { label: 'S3 兼容 (其它)', value: 's3', key: '10' }
     ],
     typeFields: {
       local: [],
@@ -1314,7 +1320,15 @@ export const configTypeMap: Record<string, ConfigTypeInfo> = {
           help: '存储桶名称',
           placeholder: 'my-bucket'
         }
-      ]
+      ],
+      s3: s3CompatibleFields('http://host:9000', '任意 S3 兼容服务地址（path-style）'),
+      minio: s3CompatibleFields('http://localhost:9000', '自建 MinIO 服务地址'),
+      r2: s3CompatibleFields('https://<account>.r2.cloudflarestorage.com', 'Cloudflare R2 的 S3 API 地址'),
+      b2: s3CompatibleFields('https://s3.us-west-002.backblazeb2.com', 'Backblaze B2 的 S3 Endpoint'),
+      'huawei-obs': s3CompatibleFields('https://obs.cn-north-4.myhuaweicloud.com', '华为云 OBS Endpoint'),
+      wasabi: s3CompatibleFields('https://s3.us-east-1.wasabisys.com', 'Wasabi 的 S3 Endpoint'),
+      'do-spaces': s3CompatibleFields('https://<region>.digitaloceanspaces.com', 'DigitalOcean Spaces Endpoint'),
+      qiniu: s3CompatibleFields('https://s3.cn-east-1.qiniucs.com', '七牛云 Kodo 的 S3 网关地址')
     }
   }
 };

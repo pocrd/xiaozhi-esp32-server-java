@@ -1,6 +1,7 @@
 package com.xiaozhi.communication.common;
 
 import com.xiaozhi.communication.domain.*;
+import com.xiaozhi.communication.domain.mcp.device.initialize.DeviceMcpPayload;
 import com.xiaozhi.communication.server.websocket.WebSocketSession;
 import com.xiaozhi.common.model.bo.DeviceBO;
 import com.xiaozhi.common.model.bo.RoleBO;
@@ -22,6 +23,7 @@ import com.xiaozhi.dialogue.playback.Player;
 import com.xiaozhi.dialogue.playback.ScheduledPlayer;
 import com.xiaozhi.ai.tts.TtsServiceFactory;
 import com.xiaozhi.enums.DeviceState;
+import com.xiaozhi.enums.ListenMode;
 import com.xiaozhi.enums.ListenState;
 import com.xiaozhi.event.ChatAbortedEvent;
 import com.xiaozhi.role.service.RoleService;
@@ -176,33 +178,7 @@ public class MessageHandler {
         if (chatSession == null) {
             return;
         }
-        // 连接关闭时清理资源
-        DeviceBO device = chatSession.getDevice();
-        if (device != null) {
-            String deviceId = device.getDeviceId();
-
-            // 服务关闭期间跳过状态写库：启动时会 bulk reset 所有设备为离线，无需在关机时逐台写入
-            if (!sessionManager.isShuttingDown()) {
-                Thread.startVirtualThread(() -> {
-                    try {
-                        String newState = DeviceBO.DEVICE_STATE_OFFLINE;
-
-                        // 时序保护：检查设备是否已重连
-                        ChatSession currentSession = sessionManager.getSessionByDeviceId(deviceId);
-                        if (currentSession != null && !sessionId.equals(currentSession.getSessionId())) {
-                            return;
-                        }
-
-                        deviceRepository.updateState(deviceId, newState);
-                        log.info("连接已关闭 - SessionId: {}, DeviceId: {}, 新状态: {}",
-                                sessionId, deviceId, newState);
-                    } catch (Exception e) {
-                        log.error("更新设备状态失败", e);
-                    }
-                });
-            }
-        }
-        // 清理会话
+        // 清理会话，设备状态由 closeSession 统一写入
         sessionManager.closeSession(sessionId);
         // 清理VAD会话
         vadService.resetSession(sessionId);
@@ -218,12 +194,20 @@ public class MessageHandler {
      * @param opusData
      */
     public void handleBinaryMessage(String sessionId, byte[] opusData) {
+        // v1 裸 opus 帧无时间戳
+        handleBinaryMessage(sessionId, opusData, 0);
+    }
+
+    /**
+     * @param timestamp 设备回显的下行帧时间戳，0 表示无；供服务端 AEC 对齐使用
+     */
+    public void handleBinaryMessage(String sessionId, byte[] opusData, long timestamp) {
         ChatSession chatSession = sessionManager.getSession(sessionId);
         if ((chatSession == null || !chatSession.isOpen()) && !vadService.isSessionInitialized(sessionId)) {
             return;
         }
         // 委托给DialogueService处理音频数据
-        dialogueService.processAudioData(chatSession, opusData);
+        dialogueService.processAudioData(chatSession, opusData, timestamp);
 
     }
 
@@ -352,16 +336,52 @@ public class MessageHandler {
         return false;
     }
 
+    /**
+     * 记录设备是否要求服务端做 AEC。features.aec 只在设备端 AEC 关闭时才出现，未出现表示设备自己已消回声。
+     */
+    public void applyAecCapability(String sessionId, HelloMessage message) {
+        if (aecService == null) {
+            return;
+        }
+        boolean required = message.getFeatures() != null && Boolean.TRUE.equals(message.getFeatures().getAec());
+        aecService.setServerAecRequired(sessionId, required);
+    }
+
+    /**
+     * 记录设备声明的音频参数，与服务端固定的处理格式不一致时告警。
+     * 服务端不按设备参数重配链路（Opus 编解码采样率无关，设备侧会自行重采样到硬件采样率）。
+     */
+    public void applyAudioParams(String sessionId, AudioParams deviceParams) {
+        if (deviceParams == null) {
+            return;
+        }
+        ChatSession chatSession = sessionManager.getSession(sessionId);
+        if (chatSession != null) {
+            chatSession.setDeviceAudioParams(deviceParams);
+        }
+        log.info("客户端音频参数 - 格式: {}, 采样率: {}, 声道: {}, 帧时长: {}ms",
+                deviceParams.getFormat(), deviceParams.getSampleRate(),
+                deviceParams.getChannels(), deviceParams.getFrameDuration());
+        String mismatch = deviceParams.mismatchAgainstServer();
+        if (mismatch != null) {
+            log.warn("设备音频参数与服务端不一致，可能影响识别或播放 - SessionId: {}, {}", sessionId, mismatch);
+        }
+    }
+
     private void handleListenMessage(ChatSession chatSession, ListenMessage message) {
         String sessionId = chatSession.getSessionId();
         log.info("收到listen消息 - SessionId: {}, State: {}, Mode: {}", sessionId, message.getState(), message.getMode());
 
-        // 如果会话标记为即将关闭，忽略listen消息
-        if (chatSession.getPlayer().getFunctionAfterChat()!= null) {
+        // 会话标记为即将关闭时忽略listen消息；player 已被告别流程清空时按没有待执行回调处理
+        Player player = chatSession.getPlayer();
+        if (player != null && player.getFunctionAfterChat() != null) {
             return;
         }
 
-        chatSession.setMode(message.getMode());
+        // stop 消息不带 mode，无条件赋值会把本轮模式抹成 null
+        if (message.getMode() != null) {
+            chatSession.setMode(message.getMode());
+        }
 
         if (message.getMsg() != null && !message.getMsg().isEmpty()) {
             chatSession.setGuaxiang(message.getMsg());
@@ -377,29 +397,34 @@ public class MessageHandler {
 
                 chatSession.transitionTo(DeviceState.LISTENING);
 
-                // 初始化VAD会话
-                vadService.initSession(sessionId);
+                // manual 由客户端松手断句，服务端不做自动收句
+                vadService.initSession(sessionId, chatSession.getMode() != ListenMode.Manual);
                 // 初始化AEC会话
                 if (aecService != null) aecService.initSession(sessionId);
                 break;
 
             case ListenState.Stop:
                 // 停止监听
-                log.info("停止监听");
+                log.info("停止监听 - Mode: {}", chatSession.getMode());
 
-                // 关闭音频流，恢复到 IDLE
-                chatSession.completeAudioStream();
-                chatSession.closeAudioStream();
-                chatSession.transitionTo(DeviceState.IDLE);
-                // 重置VAD会话
-                vadService.resetSession(sessionId);
-                // 注意：不重置 AEC 会话，保留已收敛的滤波器状态供后续对话复用
+                // audioSinks 在上一轮结束后仍非空，只有 VAD 本轮状态是准确信号
+                if (chatSession.getMode() == ListenMode.Manual
+                        && chatSession.getDeviceState() == DeviceState.LISTENING
+                        && vadService.finishSegment(sessionId)) {
+                    // 松手收句。不能 closeAudioStream/resetSession，STT 虚拟线程之后还要读 pcmData
+                    dialogueService.completeSpeechSegment(chatSession);
+                } else {
+                    // 取消本次聆听，回到 IDLE
+                    chatSession.closeAudioStream();
+                    chatSession.transitionTo(DeviceState.IDLE);
+                    vadService.resetSession(sessionId);
+                    // 不重置 AEC 会话，保留已收敛的滤波器状态供后续对话复用
+                }
                 break;
 
             case ListenState.Text:
                 // 检测聊天文本输入 — 确保 AEC 在 TTS 开始前已初始化
                 if (aecService != null) aecService.initSession(sessionId);
-                Player player = chatSession.getPlayer();
                 if (player != null ) {
                     String modeValue = message.getMode() != null ? message.getMode().getValue() : null;
                     String abortDeviceId = chatSession.getDevice() != null ? chatSession.getDevice().getDeviceId() : null;
@@ -465,11 +490,18 @@ public class MessageHandler {
     }
 
     private void handleDeviceMcpMessage(ChatSession chatSession, DeviceMcpMessage message) {
-        Long mcpRequestId = message.getPayload().getId();
-        CompletableFuture<DeviceMcpMessage> future = chatSession.getDeviceMcpHolder().getMcpPendingRequests().get(mcpRequestId);
-        if(future != null){
+        // 设备可能回来一条没有 payload 或没有 id 的 mcp 消息，取不到请求号就直接忽略
+        DeviceMcpPayload payload = message.getPayload();
+        Long mcpRequestId = payload == null ? null : payload.getId();
+        if (mcpRequestId == null) {
+            log.warn("收到缺少请求号的mcp消息 - SessionId: {}", chatSession.getSessionId());
+            return;
+        }
+        // 先摘再完成，避免同一请求被重复应答时二次分发
+        CompletableFuture<DeviceMcpMessage> future =
+                chatSession.getDeviceMcpHolder().getMcpPendingRequests().remove(mcpRequestId);
+        if (future != null) {
             future.complete(message);
-            chatSession.getDeviceMcpHolder().getMcpPendingRequests().remove(mcpRequestId);
         }
     }
 

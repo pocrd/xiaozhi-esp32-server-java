@@ -70,12 +70,13 @@ public class WebSocketSession extends ChatSession {
     }
 
     @Override
-    public void sendBinaryMessage(byte[] message) {
+    public void sendBinaryMessage(byte[] message, long timestamp) {
         try {
             if (!session.isOpen()) {
                 return;
             }
-            session.sendMessage(new BinaryMessage(message));
+            session.sendMessage(new BinaryMessage(
+                    BinaryProtocolCodec.encode(protocolVersion, message, timestamp)));
         } catch (IOException e) {
             log.error("发送Binary消息失败", e);
         }

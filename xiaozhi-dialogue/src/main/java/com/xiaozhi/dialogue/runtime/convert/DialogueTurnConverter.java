@@ -14,12 +14,8 @@ import org.springframework.ai.chat.messages.AbstractMessage;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
 import org.springframework.stereotype.Component;
-import org.springframework.util.Assert;
 
-import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -40,11 +36,7 @@ public class DialogueTurnConverter {
 
     /** 将 DialogueTurn 拆分为 MessageBO 列表（供 MessageService 批量持久化） */
     public List<MessageBO> toMessages(DialogueTurn turn) {
-        ChatResponse chatResponse = turn.getChatResponse();
-        Generation generation = chatResponse.getResult();
-        Assert.notNull(generation, "Generation is null from ChatResponse");
-
-        AssistantMessage finalAssistantMessage = generation.getOutput();
+        AssistantMessage finalAssistantMessage = turn.getAssistantMessage();
 
         List<MessageBO> messages = new ArrayList<>();
 
@@ -60,8 +52,10 @@ public class DialogueTurnConverter {
             messages.add(toToolResponseMessageBO(turn, chain.toolResponseMessage()));
         }
 
-        // 3. 最终 AssistantMessage
-        messages.add(toMessageBO(turn, finalAssistantMessage));
+        // 3. 最终 AssistantMessage；一个字没播出就被打断时没有这条
+        if (finalAssistantMessage != null) {
+            messages.add(toMessageBO(turn, finalAssistantMessage));
+        }
 
         return messages;
     }
@@ -78,13 +72,13 @@ public class DialogueTurnConverter {
         messageBO.setRoleId(conversation.getRoleId());
         messageBO.setMessageType(MessageBO.MESSAGE_TYPE_NORMAL);
 
-        Path userSpeechPath = turn.getUserSpeechPath();
+        String userSpeechStoredPath = turn.getUserSpeechStoredPath();
         List<DialogueContext.ToolCallInfo> toolCallDetails = turn.getToolCallDetails();
 
         switch (message.getMessageType()) {
             case USER:
-                if (userSpeechPath != null) {
-                    messageBO.setAudioPath(userSpeechPath.toString());
+                if (userSpeechStoredPath != null) {
+                    messageBO.setAudioPath(userSpeechStoredPath);
                 }
                 messageBO.setCreateTime(LocalDateTime.ofInstant(turn.getUserMessageCreatedAt(), ZoneId.systemDefault()));
                 // 从 UserMessage.metadata 抽取结构化元数据（speaker/emotion 等）写入 MessageBO.metadata
@@ -124,7 +118,7 @@ public class DialogueTurnConverter {
         messageBO.setMessage(toolCallAssistantMessage.getText());
         messageBO.setRoleId(conversation.getRoleId());
         messageBO.setMessageType(MessageBO.MESSAGE_TYPE_TOOL_CALL);
-        messageBO.setCreateTime(LocalDateTime.ofInstant(turn.getAssistantMessageCreatedAt(), ZoneId.systemDefault()));
+        messageBO.setCreateTime(LocalDateTime.ofInstant(turn.toolChainCreatedAt(), ZoneId.systemDefault()));
         try {
             messageBO.setToolCalls(ToolCallMessageCodec.encodeToolCalls(toolCallAssistantMessage.getToolCalls()));
         } catch (JsonProcessingException e) {
@@ -149,7 +143,7 @@ public class DialogueTurnConverter {
         messageBO.setMessage(responseText);
         messageBO.setRoleId(conversation.getRoleId());
         messageBO.setMessageType(MessageBO.MESSAGE_TYPE_TOOL_RESPONSE);
-        messageBO.setCreateTime(LocalDateTime.ofInstant(turn.getAssistantMessageCreatedAt(), ZoneId.systemDefault()));
+        messageBO.setCreateTime(LocalDateTime.ofInstant(turn.toolChainCreatedAt(), ZoneId.systemDefault()));
         try {
             messageBO.setToolCalls(ToolCallMessageCodec.encodeToolResponses(toolResponseMessage.getResponses()));
         } catch (JsonProcessingException e) {

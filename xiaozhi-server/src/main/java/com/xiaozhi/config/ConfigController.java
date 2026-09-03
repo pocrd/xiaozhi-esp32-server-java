@@ -8,7 +8,10 @@ import com.xiaozhi.common.annotation.AuditLog;
 import com.xiaozhi.common.annotation.CheckOwner;
 import com.xiaozhi.common.model.req.ConfigCreateReq;
 import com.xiaozhi.common.model.req.ConfigPageReq;
+import com.xiaozhi.common.model.req.ConfigTestReq;
 import com.xiaozhi.common.model.req.ConfigUpdateReq;
+import com.xiaozhi.common.model.resp.ConfigResp;
+import com.xiaozhi.common.model.resp.PageResp;
 import com.xiaozhi.common.web.ApiResponse;
 import com.xiaozhi.config.ConfigAppService;
 
@@ -44,7 +47,7 @@ public class ConfigController extends BaseController {
     @ResponseBody
     @SaCheckPermission("system:config:api:list")
     @Operation(summary = "根据条件查询配置", description = "返回配置信息列表")
-    public ApiResponse<?> list(@Valid ConfigPageReq req) {
+    public ApiResponse<PageResp<ConfigResp>> list(@Valid ConfigPageReq req) {
         return ApiResponse.success(configAppService.page(req, StpUtil.getLoginIdAsInt()));
     }
 
@@ -61,7 +64,7 @@ public class ConfigController extends BaseController {
     @CheckOwner(resource = "config", id = "#configId")
     @AuditLog(module = "配置管理", operation = "更新配置")
     @Operation(summary = "更新配置信息", description = "更新LLM/STT/TTS配置")
-    public ApiResponse<?> update(@PathVariable Integer configId, @Valid @RequestBody ConfigUpdateReq req) {
+    public ApiResponse<ConfigResp> update(@PathVariable Integer configId, @Valid @RequestBody ConfigUpdateReq req) {
         return ApiResponse.success(configAppService.update(configId, req));
     }
 
@@ -75,8 +78,22 @@ public class ConfigController extends BaseController {
     @SaCheckPermission("system:config:api:create")
     @AuditLog(module = "配置管理", operation = "创建配置")
     @Operation(summary = "添加配置信息", description = "添加新的LLM/STT/TTS配置")
-    public ApiResponse<?> create(@Valid @RequestBody ConfigCreateReq req) {
+    public ApiResponse<ConfigResp> create(@Valid @RequestBody ConfigCreateReq req) {
         return ApiResponse.success(configAppService.create(req, StpUtil.getLoginIdAsInt()));
+    }
+
+    /**
+     * 测试配置
+     *
+     * @param req 测试参数（表单当前值，可能未保存）
+     * @return
+     */
+    @PostMapping("/test")
+    @ResponseBody
+    @SaCheckPermission("system:config:api:list")
+    @Operation(summary = "测试配置", description = "使用当前表单参数测试模型配置是否可用")
+    public ApiResponse<Void> test(@Valid @RequestBody ConfigTestReq req) {
+        return configAppService.test(req);
     }
 
     /**
@@ -91,7 +108,7 @@ public class ConfigController extends BaseController {
     @CheckOwner(resource = "config", id = "#configId")
     @AuditLog(module = "配置管理", operation = "删除配置")
     @Operation(summary = "删除配置信息", description = "软删除指定配置")
-    public ApiResponse<?> delete(@PathVariable Integer configId) {
+    public ApiResponse<Void> delete(@PathVariable Integer configId) {
         configAppService.delete(configId);
         return ApiResponse.success("删除成功");
     }

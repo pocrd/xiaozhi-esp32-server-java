@@ -35,6 +35,38 @@
             <groupId>dev.onvoid.webrtc</groupId>
             <artifactId>webrtc-java</artifactId>
         </dependency>
+        <!--
+          webrtc-java 的 native 库（.dll/.so/.dylib）按平台分 classifier 打包。
+          不带 classifier 的主依赖只会拉取“打包机器”所在平台的 native，
+          本项目是 Mac 打包、Linux 服务器 Docker 运行，平台不匹配会导致运行时
+          AudioProcessing 初始化失败（Could not initialize class）。
+          因此显式声明所有目标平台的 native，全部打进 jar，无论服务器是 x86_64
+          还是 aarch64（ARM）都能加载。Mac 两个架构一并声明，方便本地开发运行。
+        -->
+        <dependency>
+            <groupId>dev.onvoid.webrtc</groupId>
+            <artifactId>webrtc-java</artifactId>
+            <version>${webrtc.version}</version>
+            <classifier>linux-x86_64</classifier>
+        </dependency>
+        <dependency>
+            <groupId>dev.onvoid.webrtc</groupId>
+            <artifactId>webrtc-java</artifactId>
+            <version>${webrtc.version}</version>
+            <classifier>linux-aarch64</classifier>
+        </dependency>
+        <dependency>
+            <groupId>dev.onvoid.webrtc</groupId>
+            <artifactId>webrtc-java</artifactId>
+            <version>${webrtc.version}</version>
+            <classifier>macos-x86_64</classifier>
+        </dependency>
+        <dependency>
+            <groupId>dev.onvoid.webrtc</groupId>
+            <artifactId>webrtc-java</artifactId>
+            <version>${webrtc.version}</version>
+            <classifier>macos-aarch64</classifier>
+        </dependency>
         <dependency>
             <groupId>com.microsoft.onnxruntime</groupId>
             <artifactId>onnxruntime</artifactId>
@@ -78,6 +110,12 @@
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+        </dependency>
+        <!-- Test -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 

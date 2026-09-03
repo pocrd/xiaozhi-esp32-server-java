@@ -475,6 +475,12 @@ export default {
     deleteRoleFailed: '删除失败',
     createRoleSuccess: '创建成功',
     updateRoleSuccess: '更新成功',
+    sessionSettings: '会话设置',
+    inactiveAutoEnd: '空闲自动结束',
+    inactiveAutoEndTip: '设备长时间无交互时播放告别语并结束当前会话',
+    inactiveDuration: '空闲时长',
+    inactiveDurationRange: '空闲时长请输入 10 到 3600 秒',
+    seconds: '秒',
     checkForm: '请检查表单填写是否正确',
     
     // 音色测试相关
@@ -535,6 +541,9 @@ export default {
 
   config: {
     llm: '模型',
+    test: '测试连接',
+    testSuccess: '测试成功',
+    testFailed: '测试失败',
     stt: '语音识别',
     tts: '语音合成',
     oss: '对象存储',
@@ -882,6 +891,19 @@ export default {
     connectFirst: '请先选择角色并开始聊天',
     thinkingInProgress: '思考中...',
     thinkingDone: '已完成思考',
+    thought: '思考',
+    thoughtDuration: '了 {seconds} 秒',
+    composer: {
+      addMenu: '添加内容或切换能力',
+      addImage: '添加图片',
+      attachFile: '添加文件',
+      skills: '技能',
+      model: '当前角色',
+      followRole: '跟随角色配置',
+      comingSoon: '能力即将接入',
+      stop: '停止生成',
+      send: '发送',
+    },
   },
 
   memory: {
@@ -889,5 +911,6 @@ export default {
     summary: '摘要',
     content: '内容',
     confirmDelete: '确定要删除该记忆吗？此操作不可恢复。',
+    needRoleAndDevice: '请先创建角色或绑定设备',
   },
 }

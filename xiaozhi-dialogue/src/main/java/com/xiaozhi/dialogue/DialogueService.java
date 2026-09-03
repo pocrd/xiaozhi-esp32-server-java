@@ -13,6 +13,7 @@ import com.xiaozhi.ai.stt.SttResult;
 import com.xiaozhi.common.model.bo.MessageMetadataBO;
 import org.springframework.ai.chat.messages.UserMessage;
 import com.xiaozhi.dialogue.audio.VadService.VadStatus;
+import com.xiaozhi.dialogue.audio.AecService;
 import com.xiaozhi.dialogue.playback.Player;
 import com.xiaozhi.dialogue.runtime.Persona;
 import com.xiaozhi.enums.DeviceState;
@@ -21,17 +22,20 @@ import com.xiaozhi.event.SpeechRecognizedEvent;
 
 import com.xiaozhi.storage.service.StorageServiceFactory;
 import com.xiaozhi.utils.AudioUtils;
+import com.xiaozhi.utils.OpusProcessor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.util.Assert;
 import org.springframework.util.ObjectUtils;
 import org.springframework.util.StringUtils;
+import reactor.core.publisher.Sinks;
 
 import jakarta.annotation.Resource;
 
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import lombok.extern.slf4j.Slf4j;
 /**
@@ -47,7 +51,11 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Service
 public class DialogueService{
-    private static final String ABORT_REASON_VAD = "检测到vad";
+    private static final String ABORT_REASON_ASR = "检测到用户说话";
+    /** 用户开口后播放最多暂停这么久，识别终稿迟迟不来就自动续播 */
+    private static final long BARGE_IN_PAUSE_MAX_MS = 5000;
+    /** 唤醒词音频的文件名标记，与 user/assistant 区分开 */
+    private static final String WAKE_WORD_AUDIO_TAG = "wakeword";
 
     @Resource
     private PersonaFactory personaFactory;
@@ -57,6 +65,9 @@ public class DialogueService{
 
     @Resource
     private VadService vadService;
+
+    @Resource
+    private AecService aecService;
 
     @Resource
     private SessionManager sessionManager;
@@ -81,6 +92,13 @@ public class DialogueService{
      * 处理音频数据
      */
     public void processAudioData(ChatSession session, byte[] opusData) {
+        processAudioData(session, opusData, 0);
+    }
+
+    /**
+     * @param echoTimestamp 设备回显的下行帧时间戳，0 表示无；透传给 AEC 做参考对齐
+     */
+    public void processAudioData(ChatSession session, byte[] opusData, long echoTimestamp) {
         if (session == null || opusData == null || opusData.length == 0) {
             return;
         }
@@ -100,9 +118,13 @@ public class DialogueService{
             }
 
             // 处理VAD
-            VadService.VadResult vadResult = vadService.processAudio(sessionId, opusData);
-            if (vadResult == null || vadResult.getStatus() == VadStatus.ERROR
-                    || vadResult.getProcessedData() == null) {
+            VadService.VadResult vadResult = vadService.processAudio(sessionId, opusData, echoTimestamp);
+            if (vadResult == null) {
+                // VAD 未初始化，即设备在 listen/start 之前补发的唤醒词音频，只采集不送识别
+                session.addWakeWordAudio(opusData);
+                return;
+            }
+            if (vadResult.getStatus() == VadStatus.ERROR || vadResult.getProcessedData() == null) {
                 return;
             }
 
@@ -111,14 +133,8 @@ public class DialogueService{
             // 根据VAD状态处理
             switch (vadResult.getStatus()) {
                 case SPEECH_START:
-                    // 先启动STT（同步创建音频流），确保流已准备好
+                    // 启动STT（同步创建音频流），确保流已准备好。打断改由 ASR 首字触发，见 onSttPartialText
                     startStt(session, sessionId, vadResult.getProcessedData());
-                    // 再触发abort停止当前播放中的TTS
-                    // 通过Persona.isActive()综合判断整个管道是否活跃（LLM/TTS/Player任一层）
-                    Persona persona = session.getPersona();
-                    if (persona != null && persona.isActive()) {
-                        abortDialogue(session, ABORT_REASON_VAD);
-                    }
                     break;
 
                 case SPEECH_CONTINUE:
@@ -129,11 +145,7 @@ public class DialogueService{
                     break;
 
                 case SPEECH_END:
-                    // 语音结束，完成流式识别；状态切换为 THINKING 等待 LLM 响应
-                    if (session.getDeviceState() == DeviceState.LISTENING) {
-                        session.completeAudioStream();
-                        session.transitionTo(DeviceState.THINKING);
-                    }
+                    completeSpeechSegment(session);
                     break;
 
                 default:
@@ -142,6 +154,96 @@ public class DialogueService{
         } catch (Exception e) {
             log.error("处理音频数据失败: {}", e.getMessage(), e);
         }
+    }
+
+    /**
+     * 收句：本轮语音到此为止，完成音频流并进入 THINKING 等待 LLM 响应。
+     * auto/realtime 由服务端 VAD 的 SPEECH_END 触发，manual 由客户端的 listen/stop 触发。
+     */
+    public void completeSpeechSegment(ChatSession session) {
+        // 收句无条件终结音频流：用户开口后上一轮 TTS 才到达时状态会被改成 SPEAKING，
+        // 此时若跳过，STT 侧永远等不到流结束，本轮说的话会整句丢失
+        session.completeAudioStream();
+
+        if (session.getDeviceState() == DeviceState.LISTENING) {
+            session.transitionTo(DeviceState.THINKING);
+        }
+    }
+
+    /**
+     * ASR 首次识别出文本时暂停当前播放，真打断还是误打断由终稿决定。在 STT provider 的识别线程上执行。
+     *
+     * @param bargeIn 本轮是否已暂停过，保证一轮只暂停一次
+     */
+    private void onSttPartialText(ChatSession session, String partialText, AtomicBoolean bargeIn) {
+        if (!StringUtils.hasText(partialText)) {
+            return;
+        }
+        Player player = session.getPlayer();
+
+        // 每个中间结果都刷新暂停期限
+        if (bargeIn.get()) {
+            if (player != null) {
+                player.pause(BARGE_IN_PAUSE_MAX_MS);
+            }
+            return;
+        }
+
+        // isActive() 覆盖待处理/LLM/TTS/Player 任一层活跃
+        Persona persona = session.getPersona();
+        if (persona == null || !persona.isActive()) {
+            return;
+        }
+
+        if (bargeIn.compareAndSet(false, true) && player != null) {
+            log.info("用户开口，暂停播放 - SessionId: {}, partial: {}", session.getSessionId(), partialText);
+            player.pause(BARGE_IN_PAUSE_MAX_MS);
+        }
+    }
+
+    /**
+     * 首字暂停后拿到终稿：附和或空则续播并丢弃本次识别，否则确认打断。
+     *
+     * @return 是否继续把本句当作新一轮对话处理
+     */
+    boolean resolveBargeIn(ChatSession session, Persona persona, String text) {
+        Player player = session.getPlayer();
+        if (isEcho(session, text)) {
+            log.info("识别到的是设备自己的回声，续播 - SessionId: {}, text: {}", session.getSessionId(), text);
+            if (player != null) {
+                player.resume();
+            }
+            return false;
+        }
+        // 正在播的那句是问句时，"好的""对"是回答不是附和
+        boolean answeringQuestion = player != null && endsWithQuestion(player.spokenSentences());
+        if (!StringUtils.hasText(text) || (!answeringQuestion && intentService.isBackchannel(text))) {
+            log.info("误打断，续播 - SessionId: {}, text: {}", session.getSessionId(), text);
+            if (player != null) {
+                player.resume();
+            }
+            return false;
+        }
+        log.info("确认打断 - SessionId: {}, text: {}", session.getSessionId(), text);
+        persona.markInterrupted();
+        abortDialogue(session, ABORT_REASON_ASR);
+        return true;
+    }
+
+    /**
+     * 识别文本与刚下发的句子相同：设备拾回了自己的声音
+     */
+    private static boolean isEcho(ChatSession session, String text) {
+        Player player = session.getPlayer();
+        return player != null && StringUtils.hasText(text) && player.recentlySpoke(text);
+    }
+
+    private static boolean endsWithQuestion(List<String> spokenSentences) {
+        if (spokenSentences.isEmpty()) {
+            return false;
+        }
+        String last = spokenSentences.get(spokenSentences.size() - 1).trim();
+        return last.endsWith("？") || last.endsWith("?");
     }
 
     /**
@@ -159,6 +261,7 @@ public class DialogueService{
         session.closeAudioStream();
         session.createAudioStream();
         session.transitionTo(DeviceState.LISTENING);
+        Sinks.Many<byte[]> turnSink = session.getAudioSinks();
 
         Thread.startVirtualThread(() -> {
             try {
@@ -167,7 +270,7 @@ public class DialogueService{
                     session.sendAudioData(initialAudio);
                 }
 
-                if (session.getAudioSinks() == null) {
+                if (turnSink == null) {
                     return;
                 }
 
@@ -176,29 +279,60 @@ public class DialogueService{
                     return;
                 }
 
-                var sttResult = persona.getSttService().stream(session.getAudioSinks().asFlux());
+                AtomicBoolean bargeIn = new AtomicBoolean(false);
+                var sttResult = persona.getSttService().stream(
+                        turnSink.asFlux(),
+                        partialText -> onSttPartialText(session, partialText, bargeIn));
 
-                if (sttResult == null || !StringUtils.hasText(sttResult.text())) {
+                // 本轮已被新一轮或 abort 取代，结果作废，否则过期文本会触发一轮多余对话；
+                // 暂停的播放仍由本轮终稿决定去留
+                if (session.getAudioSinks() != turnSink) {
+                    if (bargeIn.get()) {
+                        resolveBargeIn(session, persona, sttResult != null ? sttResult.text() : null);
+                    }
+                    return;
+                }
+
+                String text = sttResult != null ? sttResult.text() : null;
+                if (bargeIn.get() && !resolveBargeIn(session, persona, text)) {
+                    return;
+                }
+                if (!StringUtils.hasText(text)) {
+                    return;
+                }
+                // 播放刚结束时拾回的尾音也会被识别成一句话
+                if (isEcho(session, text)) {
+                    log.info("识别到的是设备自己的回声，忽略 - SessionId: {}, text: {}", sessionId, text);
                     return;
                 }
 
                 // 发送STT识别结果到设备
                 persona.getPlayer().sendStt(sttResult.text());
 
-                // 发布语音识别完成事件
-                eventPublisher.publishEvent(new SpeechRecognizedEvent(this, sessionId, sttResult.text(),
-                        sttResult.hasEmotion() ? sttResult.emotion() : null));
+                // 从这里到 chat 接管之间本轮也算活跃，紧接着的第二句才能打断本句
+                long epoch = persona.prepareTurn();
+                try {
+                    // 发布语音识别完成事件
+                    eventPublisher.publishEvent(new SpeechRecognizedEvent(this, sessionId, sttResult.text(),
+                            sttResult.hasEmotion() ? sttResult.emotion() : null));
 
-                // 音频保存
-                Instant userInstant = Instant.now();
-                Path userAudioPath = session.getAudioPath(MessageBO.SENDER_USER, userInstant);
-                session.setUserAudioPath(userAudioPath);
-                saveUserAudio(session, userAudioPath);
+                    // 音频保存
+                    Instant userInstant = Instant.now();
+                    Path userAudioPath = session.getAudioPath(MessageBO.SENDER_USER, userInstant);
+                    session.setUserAudioPath(userAudioPath);
+                    saveUserAudio(session, userAudioPath);
 
-                handleText(session, sttResult);
+                    handleText(session, sttResult, epoch);
+                } finally {
+                    persona.releaseTurn();
+                }
 
             } catch (Exception e) {
                 log.error("流式识别错误: {}", e.getMessage(), e);
+                Player player = session.getPlayer();
+                if (player != null && player.isPaused()) {
+                    player.resume();
+                }
             }
         });
     }
@@ -217,6 +351,7 @@ public class DialogueService{
                 return;
             }
 
+            saveWakeWordAudio(session);
             personaFactory.buildPersona(session).chat(text, false);
         } catch (Exception e) {
             log.error("处理唤醒词失败: {}", e.getMessage(), e);
@@ -230,6 +365,13 @@ public class DialogueService{
      * @param sttResult STT结果（纯文本使用 SttResult.textOnly() 包装）
      */
     public void handleText(ChatSession session, SttResult sttResult) {
+        handleText(session, sttResult, null);
+    }
+
+    /**
+     * @param epoch {@link Persona#prepareTurn()} 返回的打断代次，为 null 表示不校验
+     */
+    private void handleText(ChatSession session, SttResult sttResult, Long epoch) {
         try {
             Persona persona = session.getPersona();
 
@@ -251,7 +393,11 @@ public class DialogueService{
 
             // LLM+TTS
             try {
-                persona.chat(userMessage, false);
+                if (epoch != null) {
+                    persona.chat(userMessage, true, epoch);
+                } else {
+                    persona.chat(userMessage, true);
+                }
             } catch (Exception e) {
                 log.error("LLM对话处理失败: {}", e.getMessage(), e);
             }
@@ -315,10 +461,8 @@ public class DialogueService{
             String sessionId = session.getSessionId();
             log.info("中止对话 - SessionId: {}, Reason: {}", sessionId, reason);
 
-            // 关闭音频流
-            // 注意：当reason是"检测到vad"时，不关闭音频流和重置状态
-            // 因为这是用户打断TTS继续说话，startStt已经创建了新的音频流并设置为LISTENING
-            if (!ABORT_REASON_VAD.equals(reason)) {
+            // ASR 触发的打断不关流：startStt 刚建的新流上正跑着 STT
+            if (!ABORT_REASON_ASR.equals(reason)) {
                 session.closeAudioStream();
                 // abort 后服务端发 tts stop，设备切回聆听，服务端同步为 LISTENING
                 session.transitionTo(DeviceState.LISTENING);
@@ -330,10 +474,29 @@ public class DialogueService{
                 persona.getSynthesizer().cancel();
             }
 
+            // 历史截到用户听到的位置。要在 player.stop() 之前，此时播放器还记着下发到了哪句
+            if (persona != null) {
+                try {
+                    // ASR 触发的打断已在识别回调里同步递增过代次
+                    if (!ABORT_REASON_ASR.equals(reason)) {
+                        persona.markInterrupted();
+                    }
+                    persona.onInterrupted();
+                } catch (Exception e) {
+                    log.error("打断后收尾对话历史失败: {}", e.getMessage(), e);
+                }
+            }
+
             // 再终止音频播放，清空播放队列
             Player player = session.getPlayer();
             if(player!=null){
                 player.stop();
+            }
+
+            // 已发送未播放的帧被设备丢弃、不会产生回声，清掉待喂入的 AEC 参考，
+            // 否则下一轮开头会被当参考喂入，污染对齐导致回声漏出
+            if (aecService != null) {
+                aecService.clearReference(session.getSessionId());
             }
 
             // 无论player是否存在，都需要发送stop消息通知设备进入聆听状态
@@ -357,6 +520,35 @@ public class DialogueService{
     /**
      * 保存用户音频数据为WAV文件
      */
+    /**
+     * 落盘唤醒词前置音频。解码与上传都不能拖慢问候语，整段放虚拟线程。
+     */
+    private void saveWakeWordAudio(ChatSession session) {
+        List<byte[]> opusFrames = session.drainWakeWordAudio();
+        if (opusFrames.isEmpty()) {
+            return;
+        }
+        Thread.startVirtualThread(() -> {
+            try {
+                OpusProcessor decoder = new OpusProcessor();
+                List<byte[]> pcmFrames = new ArrayList<>(opusFrames.size());
+                for (byte[] frame : opusFrames) {
+                    pcmFrames.add(decoder.opusToPcm(frame));
+                }
+                byte[] pcm = AudioUtils.joinPcmFrames(pcmFrames);
+                if (pcm.length == 0) {
+                    return;
+                }
+                Path path = session.getAudioPath(WAKE_WORD_AUDIO_TAG, Instant.now());
+                AudioUtils.saveAsWav(path, pcm);
+                storageServiceFactory.getStorageService().upload(path, path.toString());
+                log.debug("唤醒词音频已采集: {}", path);
+            } catch (Exception e) {
+                log.warn("采集唤醒词音频失败: {}", e.getMessage());
+            }
+        });
+    }
+
     private void saveUserAudio(ChatSession session, Path path) {
         List<byte[]> pcmFrames = vadService.getPcmData(session.getSessionId());
         byte[] fullPcmData = AudioUtils.joinPcmFrames(pcmFrames);
@@ -366,12 +558,19 @@ public class DialogueService{
         AudioUtils.saveAsWav(path, fullPcmData);
         log.debug("用户音频已保存: {}", path);
 
+        // 时长必须在上传前用本地文件算好：上传云存储后本地文件会被删除，
+        // 且云端 storedPath（完整 URL）无法当作本地文件读取。
+        session.setSttDuration(AudioUtils.getAudioDuration(path));
+
+        // 默认持久化路径为本地相对路径；上传成功则替换为云存储返回的 storedPath（可能是完整 URL）。
+        // storedPath 以原始 String 保存，不能经 Path.of 转换——否则 URL 的 "//" 会被规整成 "/"。
+        String storedPath = path.toString();
         try {
-            String storedPath = storageServiceFactory.getStorageService().upload(path, path.toString());
-            session.setUserAudioPath(Path.of(storedPath));
+            storedPath = storageServiceFactory.getStorageService().upload(path, path.toString());
         } catch (Exception e) {
             log.warn("上传用户音频失败，保留本地路径: {}", path, e);
         }
+        session.setUserAudioStoredPath(storedPath);
     }
 
 }

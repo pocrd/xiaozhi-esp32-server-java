@@ -117,6 +117,14 @@ logging:
 # 小智扩展配置
 # ============================================================
 xiaozhi:
+  # 设备接入鉴权：配置 secret 即开启（OTA 下发签名 token，WS 握手校验），留空不鉴权
+  device-auth:
+    secret:
+    expire-seconds: 2592000
+    allowed-devices:  # 逗号分隔的设备MAC，白名单免 token
+  communication:
+    # OTA 下发的 WS 二进制帧版本：1=裸Opus，2=带时间戳(服务端AEC需要)，3=带长度头无时间戳
+    websocket-protocol-version: 2
   runtime:
     # 生产环境建议改成绝对路径，避免模型目录和原生库目录依赖启动工作目录
     native-lib-dir: lib
@@ -125,9 +133,6 @@ xiaozhi:
   vad:
     model:
       path: models/silero_vad.onnx
-  check:
-    inactive:
-      session: true
 
 # ============================================================
 # SpringDoc OpenAPI 配置

@@ -14,6 +14,7 @@ import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 import org.springframework.web.socket.WebSocketSession;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -49,6 +50,9 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
 
         com.xiaozhi.communication.server.websocket.WebSocketSession xiaoZhiSession
                 = new com.xiaozhi.communication.server.websocket.WebSocketSession(session);
+        // 握手头先给出版本，hello 到达后以其声明为准
+        xiaoZhiSession.setProtocolVersion(resolveProtocolVersion(
+                parseVersion(session.getHandshakeHeaders().getFirst("Protocol-Version")), session.getId()));
         messageHandler.afterConnection(xiaoZhiSession, deviceIdAuth);
         sessionManager.openAudioChannel(xiaoZhiSession.getSessionId(), deviceIdAuth);
 
@@ -96,7 +100,18 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
         if (chatSession == null || chatSession.getDevice() == null) {
             return;
         }
-        messageHandler.handleBinaryMessage(sessionId, message.getPayload().array());
+        ByteBuffer buffer = message.getPayload();
+        byte[] data = new byte[buffer.remaining()];
+        buffer.get(data);
+        int version = chatSession.getProtocolVersion();
+        BinaryProtocolCodec.Frame frame = BinaryProtocolCodec.decode(version, data);
+        if (frame == null) {
+            // 设备声明的版本与实际帧格式不符，整个会话降回 v1 裸帧（收发同源，下行一并降级）
+            log.warn("二进制帧与协议v{}不符，会话降级为v1 - SessionId: {}, 帧长: {}", version, sessionId, data.length);
+            chatSession.setProtocolVersion(BinaryProtocolCodec.VERSION_V1);
+            frame = new BinaryProtocolCodec.Frame(data, 0);
+        }
+        messageHandler.handleBinaryMessage(sessionId, frame.payload(), frame.timestamp());
     }
 
     @Override
@@ -144,19 +159,26 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
         var sessionId = session.getId();
         log.info("收到hello消息 - SessionId: {}, JsonNode: {}", sessionId, message);
 
-        if (message.getAudioParams() != null) {
-            log.info("客户端音频参数 - 格式: {}, 采样率: {}, 声道: {}, 帧时长: {}ms",
-                    message.getAudioParams().getFormat(),
-                    message.getAudioParams().getSampleRate(),
-                    message.getAudioParams().getChannels(),
-                    message.getAudioParams().getFrameDuration());
+        messageHandler.applyAecCapability(sessionId, message);
+
+        ChatSession current = sessionManager.getSession(sessionId);
+        int protocolVersion = current != null ? current.getProtocolVersion() : BinaryProtocolCodec.VERSION_V1;
+        // hello 未声明版本时沿用握手头协商的结果
+        if (message.getVersion() != null) {
+            protocolVersion = resolveProtocolVersion(message.getVersion(), sessionId);
+            if (current != null) {
+                current.setProtocolVersion(protocolVersion);
+            }
         }
+
+        messageHandler.applyAudioParams(sessionId, message.getAudioParams());
 
         // 回复hello消息
         var resp = new HelloMessageResp()
+                .setVersion(protocolVersion)
                 .setTransport("websocket")
                 .setSessionId(sessionId)
-                .setAudioParams(AudioParams.Opus);
+                .setAudioParams(AudioParams.serverCapability());
 
         try {
             session.sendMessage(new TextMessage(JsonUtil.toJson(resp)));
@@ -175,10 +197,34 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
         }
     }
 
+    /**
+     * 未声明或声明了不支持的版本时按 v1 裸帧处理
+     */
+    private int resolveProtocolVersion(Integer declared, String sessionId) {
+        if (declared == null) {
+            return BinaryProtocolCodec.VERSION_V1;
+        }
+        if (!BinaryProtocolCodec.isSupported(declared)) {
+            log.warn("设备声明了不支持的协议版本v{}，按v1处理 - SessionId: {}", declared, sessionId);
+            return BinaryProtocolCodec.VERSION_V1;
+        }
+        return declared;
+    }
+
+    private static Integer parseVersion(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(value.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     private Map<String, String> getHeadersFromSession(WebSocketSession session) {
         // 尝试从请求头获取设备ID
         String[] deviceKeys = { "x-dubbo-device-id", "mac_address", "uuid", "Authorization" };
-
         Map<String, String> headers = new HashMap<>();
 
         for (String key : deviceKeys) {
@@ -193,6 +239,9 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
             String query = uri.getQuery();
             if (query != null) {
                 for (String key : deviceKeys) {
+                    if (key != null && key.equals("x-dubbo-device-id")) {
+                        continue;
+                    }
                     String paramPattern = key + "=";
                     int startIdx = query.indexOf(paramPattern);
                     if (startIdx >= 0) {

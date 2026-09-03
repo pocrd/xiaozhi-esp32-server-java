@@ -2,12 +2,17 @@ package com.xiaozhi.communication.common;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.xiaozhi.common.model.bo.DeviceBO;
+import com.xiaozhi.common.model.bo.RoleBO;
+import com.xiaozhi.ai.llm.factory.ChatModelFactory;
+import com.xiaozhi.dialogue.llm.factory.PersonaFactory;
 import com.xiaozhi.dialogue.runtime.Persona;
 import com.xiaozhi.ai.stt.SttServiceFactory;
 import com.xiaozhi.token.TokenService;
 import com.xiaozhi.ai.tts.TtsServiceFactory;
 import com.xiaozhi.common.model.bo.ConfigBO;
+import com.xiaozhi.storage.service.StorageServiceFactory;
 import com.xiaozhi.config.service.ConfigService;
+import com.xiaozhi.role.service.RoleService;
 import com.xiaozhi.device.service.DeviceService;
 import com.xiaozhi.utils.JsonUtil;
 import jakarta.annotation.Resource;
@@ -42,6 +47,9 @@ public class RedisSubscriber {
     private TtsServiceFactory ttsServiceFactory;
 
     @Resource
+    private StorageServiceFactory storageServiceFactory;
+
+    @Resource
     private TokenService tokenService;
 
     @Resource
@@ -49,6 +57,15 @@ public class RedisSubscriber {
 
     @Resource
     private DeviceService deviceService;
+
+    @Resource
+    private PersonaFactory personaFactory;
+
+    @Resource
+    private ChatModelFactory chatModelFactory;
+
+    @Resource
+    private RoleService roleService;
 
     @Bean
     public RedisMessageListenerContainer redisMessageListenerContainer(RedisConnectionFactory connectionFactory) {
@@ -92,6 +109,11 @@ public class RedisSubscriber {
             if (freshDevice != null) {
                 freshDevice.setSessionId(session.getSessionId());
                 session.setDevice(freshDevice);
+                RoleBO role = roleService.getBO(freshDevice.getRoleId());
+                if (role != null) {
+                    session.setInactiveTimeoutSeconds(role.getInactiveTimeoutSeconds() != null
+                            ? role.getInactiveTimeoutSeconds() : 60);
+                }
             }
             Persona persona = session.getPersona();
             if (persona != null) {
@@ -108,10 +130,15 @@ public class RedisSubscriber {
     public void onRoleUpdated(String message) {
         try {
             Integer roleId = Integer.parseInt(message.trim());
+            RoleBO updatedRole = roleService.getBO(roleId);
             int count = 0;
             for (ChatSession session : sessionManager.getAllSessions()) {
                 DeviceBO device = session.getDevice();
                 if (device != null && roleId.equals(device.getRoleId())) {
+                    if (updatedRole != null) {
+                        session.setInactiveTimeoutSeconds(updatedRole.getInactiveTimeoutSeconds() != null
+                                ? updatedRole.getInactiveTimeoutSeconds() : 60);
+                    }
                     Persona persona = session.getPersona();
                     if (persona != null) {
                         persona.getConversation().clear();
@@ -163,12 +190,22 @@ public class RedisSubscriber {
             String configType = (String) payload.get("configType");
             Integer configId = (Integer) payload.get("configId");
 
+            // OSS 默认配置切换：清空存储工厂缓存，下次按最新配置重建（不依赖 configId 对应记录是否存在）
+            if ("oss".equals(configType)) {
+                storageServiceFactory.refresh();
+                log.info("已清除存储工厂缓存 - configType: oss, configId: {}", configId);
+                return;
+            }
+
             ConfigBO config = configService.getBO(configId);
             if (config != null) {
                 if ("stt".equals(configType)) {
                     sttServiceFactory.removeCache(config);
                 } else if ("tts".equals(configType)) {
                     ttsServiceFactory.removeCache(config);
+                } else if ("llm".equals(configType)) {
+                    personaFactory.clearPersonasByModelId(configId);
+                    chatModelFactory.removeCache(configId);
                 }
                 // Token 缓存（Coze OAuth、阿里云 Token 等）与 configType 无关，统一清除
                 tokenService.removeCache(config);

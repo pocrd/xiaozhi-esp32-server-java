@@ -2,6 +2,7 @@ package com.xiaozhi.ai.stt.providers;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
+import com.xiaozhi.common.annotation.MonitoredOperation;
 import com.xiaozhi.ai.stt.SttResult;
 import com.xiaozhi.ai.stt.SttService;
 import com.xiaozhi.common.model.bo.ConfigBO;
@@ -17,6 +18,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 import lombok.extern.slf4j.Slf4j;
 /**
@@ -36,6 +38,8 @@ public class FunASRSttService implements SttService {
     private static final String SPEAKING_START = "{\"mode\":\"2pass\",\"wav_name\":\"voice.wav\",\"is_speaking\":true,\"wav_format\":\"pcm\",\"chunk_size\":[5,10,5],\"itn\":true}";
     private static final String SPEAKING_END = "{\"is_speaking\": false}";
     private static final int QUEUE_TIMEOUT_MS = 100; // 队列等待超时时间
+    // 上游未终结音频流时的兜底上限，需远大于设备上行抖动，否则弱网会截断用户没说完的话
+    private static final long IDLE_TIMEOUT_MS = 5000;
     private static final long RECOGNITION_TIMEOUT_MS = 90000; // 识别超时时间（90秒）
 
     private final String apiUrl;
@@ -49,8 +53,29 @@ public class FunASRSttService implements SttService {
         return PROVIDER_NAME;
     }
 
+    /**
+     * 中间结果旁路通知：只传非空文本，且回调异常绝不影响识别主流程
+     */
+    private void notifyPartialText(Consumer<String> onPartialText, String text) {
+        if (onPartialText == null || text == null || text.isBlank()) {
+            return;
+        }
+        try {
+            onPartialText.accept(text);
+        } catch (Exception e) {
+            log.debug("中间识别结果回调异常，已忽略", e);
+        }
+    }
+
     @Override
     public SttResult stream(Flux<byte[]> audioSink) {
+        return stream(audioSink, text -> {
+        });
+    }
+
+    @MonitoredOperation(name = "xiaozhi.stt.stream")
+    @Override
+    public SttResult stream(Flux<byte[]> audioSink, Consumer<String> onPartialText) {
         // 使用阻塞队列存储音频数据
         BlockingQueue<byte[]> audioQueue = new LinkedBlockingQueue<>();
         AtomicBoolean isCompleted = new AtomicBoolean(false);
@@ -79,6 +104,7 @@ public class FunASRSttService implements SttService {
                 // 启动虚拟线程发送音频数据
                 Thread.startVirtualThread(() -> {
                     try {
+                        long idleMs = 0;
                         while (!isCompleted.get() || !audioQueue.isEmpty()) {
                             byte[] audioChunk = null;
                             try {
@@ -88,10 +114,21 @@ public class FunASRSttService implements SttService {
                                 Thread.currentThread().interrupt(); // 重新设置中断标志
                                 break;
                             }
-                            
-                            if (audioChunk != null && isOpen()) {
-                                send(audioChunk);
+
+                            if (audioChunk == null) {
+                                idleMs += QUEUE_TIMEOUT_MS;
+                                // 上游未按预期终结音频流时的兜底，避免线程与连接一直挂着
+                                if (idleMs >= IDLE_TIMEOUT_MS) {
+                                    log.warn("音频流长时间无数据，主动结束识别");
+                                    break;
+                                }
+                                continue;
                             }
+                            idleMs = 0;
+                            if (!isOpen()) {
+                                break;
+                            }
+                            send(audioChunk);
                         }
                         
                         // 发送结束信号
@@ -111,6 +148,9 @@ public class FunASRSttService implements SttService {
                     boolean isFinal = Boolean.TRUE.equals(jsonObject.getBoolean("is_final"));
                     String mode = jsonObject.getString("mode");
                     String text = jsonObject.getString("text");
+                    // 中间结果旁路：2pass-online为实时增量文本，2pass-offline为分段离线修正文本，
+                    // 两者都早于连接关闭到达，任意非空文本都说明用户确实开口说话了
+                    notifyPartialText(onPartialText, text);
                     // 2pass模式：拼接每个离线修正片段（VAD可能将一句话分为多段）
                     if (isFinal && "2pass-offline".equals(mode)) {
                         if (text != null && !text.isEmpty()) {

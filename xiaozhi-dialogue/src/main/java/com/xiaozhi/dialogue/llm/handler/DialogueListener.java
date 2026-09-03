@@ -1,11 +1,17 @@
 package com.xiaozhi.dialogue.llm.handler;
 
+import com.xiaozhi.ai.llm.memory.Conversation;
 import com.xiaozhi.dialogue.runtime.DialogueTurn;
 import com.xiaozhi.dialogue.runtime.PersonaListener;
 import com.xiaozhi.dialogue.runtime.convert.DialogueTurnConverter;
 import com.xiaozhi.message.service.MessageService;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
+
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 import lombok.extern.slf4j.Slf4j;
 /**
@@ -32,7 +38,22 @@ public class DialogueListener implements PersonaListener {
     }
 
     @Override
+    public void onDialogueTurnTruncated(Conversation conversation, Instant assistantMessageCreatedAt, String spokenText) {
+        try {
+            messageService.truncateAssistant(conversation.getOwnerId(), conversation.getRoleId(),
+                    LocalDateTime.ofInstant(assistantMessageCreatedAt, ZoneId.systemDefault()), spokenText);
+        } catch (Exception e) {
+            log.error("截断被打断的助手消息失败", e);
+        }
+    }
+
+    @Override
     public void onError(Throwable error) {
-        log.error("LLM调用失败", error);
+        if (error instanceof WebClientResponseException webErr) {
+            log.error("LLM调用失败 status={} body={}",
+                    webErr.getStatusCode(), webErr.getResponseBodyAsString(), error);
+        } else {
+            log.error("LLM调用失败", error);
+        }
     }
 }

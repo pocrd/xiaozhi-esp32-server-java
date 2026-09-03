@@ -8,7 +8,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -41,10 +40,25 @@ public class EmojiUtils {
     private static final Pattern HTML_TAG_PATTERN = Pattern.compile("<[^>]+>");
     private static final Pattern SPECIAL_CHARS_PATTERN = Pattern.compile("[@#№$%&*]");
     private static final Pattern WHITESPACE_PATTERN = Pattern.compile("\\s+");
+
+    // Markdown 结构标记，念出来全是噪音。链接只保留可读文字，URL 丢掉
+    private static final Pattern MD_DIVIDER_PATTERN = Pattern.compile("(?m)^\\s*([-*_])\\1{2,}\\s*$");
+    private static final Pattern MD_CODE_FENCE_PATTERN = Pattern.compile("```[a-zA-Z0-9_+-]*");
+    private static final Pattern MD_IMAGE_PATTERN = Pattern.compile("!\\[[^\\]]*\\]\\([^)]*\\)");
+    private static final Pattern MD_LINK_PATTERN = Pattern.compile("\\[([^\\]]*)\\]\\([^)]*\\)");
+    private static final Pattern MD_INLINE_CODE_PATTERN = Pattern.compile("`([^`]*)`");
+    private static final Pattern MD_LINE_PREFIX_PATTERN = Pattern.compile("(?m)^\\s*([>*+-]|\\d+\\.)\\s+");
+    private static final Pattern MD_EMPHASIS_PATTERN = Pattern.compile("[~_]");
     
+    // 括号整组去掉：舞台指示、颜文字、补充说明，只匹配已闭合且不嵌套的括号
+    private static final Pattern PARENTHESES_PATTERN = Pattern.compile("[(（][^()（）]*[)）]");
+
+    // 方括号元数据标签：[yyyy-MM-ddT..]、[说话人:..]、[neutral]，情绪词只认小写字母
+    private static final Pattern META_TAG_PATTERN = Pattern.compile(
+        "\\[(?:\\d{4}-\\d{2}-\\d{2}T[^\\]]{0,20}|说话人[:：][^\\]]{0,30}|[a-z]{2,12})\\]\\s*");
+
     // 颜文字模式 - 匹配常见的颜文字组合
     private static final Pattern KAOMOJI_PATTERN = Pattern.compile(
-        "[(（][^)）]{1,10}[)）]|" +  // 如 (^_^) (・ω・) (≧▽≦)
         "[<＜][^>＞]{1,10}[>＞]|" +  // 如 <(￣︶￣)>
         "[\\\\¯\\\\*][_-]{1,2}[\\\\¯\\\\*]|" +  // 如 \_/ \*_*\
         "\\\\o/|" +                 // \o/
@@ -126,8 +140,16 @@ public class EmojiUtils {
      * @return 清理后的文本
      */
     public static String cleanText(String text) {
+        // 必须先于移除换行：列表与引用前缀靠行首定位；先于括号清洗：链接的 (url) 靠 Markdown 规则处理
+        text = stripMarkdown(text);
+        text = stripMetaTags(text);
+        text = stripParentheses(text);
+
+        // 换行转空格而不是直接删：多行列表被拼成一句会连着念，没有停顿
+        text = text.replaceAll("[\\n\\r]", " ");
+
         // 移除控制字符
-        text = text.replaceAll("[\\t\\n\\r\b\\f]", "");
+        text = text.replaceAll("[\\t\b\\f]", "");
 
         // 移除HTML标签
         text = HTML_TAG_PATTERN.matcher(text).replaceAll("");
@@ -140,6 +162,50 @@ public class EmojiUtils {
 
         // 去除首尾空格
         return text.trim();
+    }
+
+    /**
+     * 去掉方括号元数据标签，标签后紧跟的空白一并去掉
+     */
+    public static String stripMetaTags(String text) {
+        if (text == null || text.isEmpty()) {
+            return text;
+        }
+        return META_TAG_PATTERN.matcher(text).replaceAll("");
+    }
+
+    /**
+     * 去掉括号及括号内全部内容，只处理已闭合的括号
+     */
+    public static String stripParentheses(String text) {
+        if (text == null || text.isEmpty()) {
+            return text;
+        }
+        return PARENTHESES_PATTERN.matcher(text).replaceAll("");
+    }
+
+    /**
+     * Markdown 图片整体去掉，链接只保留可读文字
+     */
+    public static String stripLinks(String text) {
+        if (text == null || text.isEmpty()) {
+            return text;
+        }
+        text = MD_IMAGE_PATTERN.matcher(text).replaceAll("");
+        return MD_LINK_PATTERN.matcher(text).replaceAll("$1");
+    }
+
+    /**
+     * 去掉 Markdown 结构标记，保留可读内容。
+     * 流式输出下标记可能跨句被切断，此时该句按原样发音。
+     */
+    private static String stripMarkdown(String text) {
+        text = MD_DIVIDER_PATTERN.matcher(text).replaceAll("");
+        text = MD_CODE_FENCE_PATTERN.matcher(text).replaceAll("");
+        text = stripLinks(text);
+        text = MD_INLINE_CODE_PATTERN.matcher(text).replaceAll("$1");
+        text = MD_LINE_PREFIX_PATTERN.matcher(text).replaceAll("");
+        return MD_EMPHASIS_PATTERN.matcher(text).replaceAll("");
     }
 
     /**
@@ -167,8 +233,7 @@ public class EmojiUtils {
         if (text == null || text.isEmpty()) {
             return false;
         }
-        Matcher matcher = KAOMOJI_PATTERN.matcher(text);
-        return matcher.find();
+        return PARENTHESES_PATTERN.matcher(text).find() || KAOMOJI_PATTERN.matcher(text).find();
     }
 
     /**
@@ -181,8 +246,7 @@ public class EmojiUtils {
         if (text == null) {
             return null;
         }
-        // 将颜文字替换为空字符串
-        return KAOMOJI_PATTERN.matcher(text).replaceAll("");
+        return KAOMOJI_PATTERN.matcher(stripParentheses(text)).replaceAll("");
     }
 
     /**

@@ -1,10 +1,15 @@
 package com.xiaozhi.ai.llm.memory;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.chat.messages.UserMessage;
+
 import lombok.Builder;
-import org.springframework.ai.chat.messages.*;
-
-import java.util.*;
-
 import lombok.extern.slf4j.Slf4j;
 /**
  * 限定消息条数（消息窗口）的Conversation实现。根据不同的策略，可实现聊天会话的持久化、加载、清除等功能。
@@ -55,32 +60,36 @@ public class MessageWindowConversation extends Conversation {
      * 返回带系统提示词的消息列表，接受运行时上下文（位置、声纹等）
      */
     public synchronized List<Message> messages(ConversationContext context) {
-        // 按对话组裁剪：简单组=[User,Assistant](2条)，工具组=[User,Assistant(toolCall),Tool,Assistant(final)](4条)
-        // while (messages.size() > maxMessages + 1) {
-        //     if (messages.size() >= 2 && messages.get(1) instanceof AssistantMessage am
-        //             && am.getToolCalls() != null && !am.getToolCalls().isEmpty()
-        //             && messages.size() >= 4) {
-        //         // 工具对话组：移除 4 条 [User, Assistant(toolCall), Tool, Assistant(final)]
-        //         for (int i = 0; i < 4 && !messages.isEmpty(); i++) {
-        //             messages.remove(0);
-        //         }
-        //     } else {
-        //         // 简单对话组：移除 2 条 [User, Assistant]
-        //         messages.remove(0);
-        //         if (!messages.isEmpty()) {
-        //             messages.remove(0);
-        //         }
-        //     }
-        // }
+        // 按对话组裁剪：一组从队首到下一条 UserMessage 之前，工具链不论多长都整组进出，
+        // 队首必须始终落在 UserMessage 上，不能留下孤儿 tool_call 或孤儿 ToolResponseMessage
+        while (messages.size() > maxMessages + 1) {
+            int groupSize = firstGroupSize();
+            // 只剩最后一组时保留整组，宁可超出窗口也不送出残缺的工具链
+            if (groupSize >= messages.size()) {
+                break;
+            }
+            for (int i = 0; i < groupSize; i++) {
+                messages.remove(0);
+            }
+        }
         // 新消息列表对象，避免使用过程中污染原始列表对象
         List<Message> historyMessages = new ArrayList<>();
-        var roleSystemMessage = roleSystemMessage(context);
-        if(roleSystemMessage.isPresent()){
-            historyMessages.add(roleSystemMessage.get());
-        }
+        historyMessages.add(roleSystemMessage(context));
         historyMessages.addAll(messages);
         // UserMessage 按 metadata 装配带前缀的副本供 LLM 使用
         return historyMessages.stream().map(UserMessageAssembler::assemble).toList();
+    }
+
+    /**
+     * 队首对话组的长度：从队首起到下一条 UserMessage 之前，没有下一条时为剩余全部。
+     */
+    private int firstGroupSize() {
+        for (int i = 1; i < messages.size(); i++) {
+            if (messages.get(i) instanceof UserMessage) {
+                return i;
+            }
+        }
+        return messages.size();
     }
 
     @Override
