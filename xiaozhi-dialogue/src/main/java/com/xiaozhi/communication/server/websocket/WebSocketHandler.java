@@ -119,22 +119,27 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         String sessionId = session.getId();
         ChatSession chatSession = sessionManager.getSession(sessionId);
+        // 在清理会话之前先获取 deviceId，避免清理后获取不到
+        String deviceId = chatSession != null ? chatSession.getDeviceIdOrUnknown() : "unknown";
         messageHandler.afterConnectionClosed(sessionId);
 
-        log.info("WebSocket连接关闭 - SessionId: {}, DeviceId: {}, 状态: {}", sessionId, chatSession != null ? chatSession.getDeviceIdOrUnknown() : "unknown", status);
+        log.info("WebSocket连接关闭 - SessionId: {}, DeviceId: {}, 状态: {}", sessionId, deviceId, status);
     }
 
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
         String sessionId = session.getId();
+        ChatSession chatSession = sessionManager.getSession(sessionId);
+        // 先获取 deviceId，避免后续清理后获取不到
+        String deviceId = chatSession != null ? chatSession.getDeviceIdOrUnknown() : "unknown";
         // 检查是否是客户端正常关闭连接导致的异常
         if (isClientCloseRequest(exception)) {
             // 客户端主动关闭，记录为信息级别日志而非错误
-            // log.info("WebSocket连接被客户端主动关闭 - SessionId: {}, DeviceId: {}", sessionId, sessionManager.getSession(sessionId) != null ? sessionManager.getSession(sessionId).getDeviceIdOrUnknown() : "unknown");
+            // log.info("WebSocket连接被客户端主动关闭 - SessionId: {}, DeviceId: {}", sessionId, deviceId);
             messageHandler.afterConnectionClosed(sessionId);
         } else {
             // 真正的传输错误
-            log.error("WebSocket传输错误 - SessionId: {}, DeviceId: {}", sessionId, sessionManager.getSession(sessionId) != null ? sessionManager.getSession(sessionId).getDeviceIdOrUnknown() : "unknown", exception);
+            log.error("WebSocket传输错误 - SessionId: {}, DeviceId: {}", sessionId, deviceId, exception);
         }
     }
 
@@ -144,6 +149,13 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
     private boolean isClientCloseRequest(Throwable exception) {
         // 检查常见的客户端关闭连接导致的异常类型
         if (exception instanceof IOException) {
+            // NIO 通道关闭相关异常：ClosedChannelException、AsynchronousCloseException、CancelledKeyException
+            // 均为客户端断开或服务端尝试操作已关闭通道时抛出，不属于真正的传输错误
+            if (exception instanceof java.nio.channels.ClosedChannelException
+                    || exception instanceof java.nio.channels.AsynchronousCloseException
+                    || exception instanceof java.nio.channels.CancelledKeyException) {
+                return true;
+            }
             String message = exception.getMessage();
             if (message != null) {
                 return message.contains("Connection reset by peer") ||

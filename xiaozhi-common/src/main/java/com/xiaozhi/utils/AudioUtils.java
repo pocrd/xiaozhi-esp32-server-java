@@ -234,7 +234,7 @@ public class AudioUtils {
 
         int wavSampleRate = readWavSampleRate(wavData);
         if (wavSampleRate > 0 && wavSampleRate != SAMPLE_RATE) {
-            log.warn("WAV采样率{}Hz与服务端{}Hz不一致，已重采样", wavSampleRate, SAMPLE_RATE);
+            // log.warn("WAV采样率{}Hz与服务端{}Hz不一致，已重采样", wavSampleRate, SAMPLE_RATE);
             return resamplePcm(pcmData, wavSampleRate, SAMPLE_RATE);
         }
         return pcmData;

@@ -386,7 +386,6 @@ public class MessageHandler {
 
         if (message.getMsg() != null && !message.getMsg().isEmpty()) {
             chatSession.setGuaxiang(message.getMsg());
-            log.info("收到卦象信息 - SessionId: {}, DeviceId: {}, Guaxiang: {}", sessionId, chatSession.getDeviceIdOrUnknown(), message.getMsg());
         }
 
 

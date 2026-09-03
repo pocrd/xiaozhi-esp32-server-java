@@ -257,7 +257,7 @@ public abstract class Player {
      * 发送表情信息。如果句子里没有分析出表情，则默认返回 happy
      */
     protected void sendEmotion( String emotion) {
-        messageService.sendEmotion(session, emotion);
+        // messageService.sendEmotion(session, emotion);
     }
 
     /**

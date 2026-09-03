@@ -553,11 +553,9 @@ public class ScheduledPlayer extends Player {
         // 更新活跃时间
         session.setLastActivityTime(Instant.now());
 
-        // 发送文本和表情（如果有），与首帧音频紧邻发送
+        // 发送文本，与首帧音频紧邻发送
         String text = speech.getText();
         if (StringUtils.hasText(text)) {
-            String mood = speech.getMood();
-            sendEmotion(StringUtils.hasText(mood) ? mood : EmojiUtils.getRandomEmotion());
             sendSentenceStart(text, queued.reply());
         }
 

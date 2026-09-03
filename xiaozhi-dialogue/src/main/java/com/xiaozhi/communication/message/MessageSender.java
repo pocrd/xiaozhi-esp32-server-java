@@ -76,18 +76,18 @@ public class MessageSender {
     }
 
     public void sendEmotion(ChatSession session, String emotion) {
-        if (session == null || !session.isOpen()) {
-            log.warn("sendEmotion无法发送消息 - 会话已关闭或为null, DeviceId: {}", session != null ? session.getDeviceIdOrUnknown() : "unknown");
-            return;
-        }
-        ObjectNode messageJson = objectMapper.createObjectNode();
-        messageJson.put("session_id", session.getSessionId());
-        messageJson.put("type", "llm");
-        messageJson.put("emotion", emotion);
-        messageJson.put("text", emotion);
-        String jsonMessage = messageJson.toString();
-        log.info("sendEmotion发送Emotion消息 - SessionId: {}, DeviceId: {}, Message: {}", session.getSessionId(), session.getDeviceIdOrUnknown(), jsonMessage);
-        sendTextMessage(session, jsonMessage);
+        // if (session == null || !session.isOpen()) {
+        //     log.warn("sendEmotion无法发送消息 - 会话已关闭或为null, DeviceId: {}", session != null ? session.getDeviceIdOrUnknown() : "unknown");
+        //     return;
+        // }
+        // ObjectNode messageJson = objectMapper.createObjectNode();
+        // messageJson.put("session_id", session.getSessionId());
+        // messageJson.put("type", "llm");
+        // messageJson.put("emotion", emotion);
+        // messageJson.put("text", emotion);
+        // String jsonMessage = messageJson.toString();
+        // log.info("sendEmotion发送Emotion消息 - SessionId: {}, DeviceId: {}, Message: {}", session.getSessionId(), session.getDeviceIdOrUnknown(), jsonMessage);
+        // sendTextMessage(session, jsonMessage);
     }
 
     public void sendTextMessage(ChatSession chatSession, String message) {
