@@ -377,11 +377,11 @@ public class DialogueService{
 
             String text = sttResult.text();
 
-            // 意图检测
-            if (intentService.detect(text) == IntentService.Intent.EXIT) {
-                sendGoodbyeMessage(session);
-                return;
-            }
+            // 意图检测（已禁用：关键词误判率过高，退出交由 LLM 的 exit_session 工具判断）
+            // if (intentService.detect(text) == IntentService.Intent.EXIT) {
+            //     sendGoodbyeMessage(session);
+            //     return;
+            // }
 
             // 如果有卦象信息，加入到识别结果中交给LLM处理
             String guaxiang = session.getGuaxiang();
