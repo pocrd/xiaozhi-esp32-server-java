@@ -1,5 +1,16 @@
 package com.xiaozhi.device;
 
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+
 import com.xiaozhi.common.exception.ResourceNotFoundException;
 import com.xiaozhi.common.model.bo.DeviceBO;
 import com.xiaozhi.common.model.bo.RoleBO;
@@ -24,17 +35,8 @@ import com.xiaozhi.device.service.DeviceService;
 import com.xiaozhi.role.service.RoleService;
 import com.xiaozhi.utils.CmsUtils;
 import com.xiaozhi.utils.CommonUtils;
+
 import jakarta.annotation.Resource;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
-
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
-
 import lombok.extern.slf4j.Slf4j;
 /**
  * 设备领域应用服务。
@@ -76,6 +78,19 @@ public class DeviceAppService {
      */
     @Value("${xiaozhi.communication.websocket-protocol-version:2}")
     private int websocketProtocolVersion;
+
+    /** OTA 固件配置：key=dx/yd, value={url, version} */
+    @Value("#{${xiaozhi.ota.firmware:{}}}")
+    private Map<String, Map<String, String>> firmware;
+
+    /** DX 硬件设备（已知 MAC 地址硬编码，后续新设备由固件直接上报 hardwareType） */
+    private static final Set<String> DX_SET = Set.of(
+    );
+
+    /** YD 硬件设备 */
+    private static final Set<String> YD_SET = Set.of(
+        "device031", "device044"
+    );
 
 
     public PageResp<DeviceResp> page(DevicePageReq req, Integer userId) {
@@ -277,11 +292,26 @@ public class DeviceAppService {
         DeviceResp boundDevice = getResp(deviceId);
         Map<String, Object> otaResponse = new HashMap<>();
 
-        // --- 固件信息 ---
-        Map<String, Object> firmwareInfo = new HashMap<>();
-        firmwareInfo.put("url", serverAddressProvider.getOtaAddress());
-        firmwareInfo.put("version", "1.0.0");
-        otaResponse.put("firmware", firmwareInfo);
+        // --- 固件信息：按硬件类型匹配 ---
+        String hType = req.getHType();
+        if (!StringUtils.hasText(hType)) {
+            // 固件未上报 hardwareType 时，根据 deviceId 判定
+            String normalizedId = deviceId.toLowerCase();
+            if (DX_SET.contains(normalizedId)) {
+                hType = "dx";
+            } else if (YD_SET.contains(normalizedId)) {
+                hType = "yd";
+            }
+            req.setHType(hType);
+        }
+        if (hType != null && firmware.containsKey(hType)) {
+            Map<String, String> fw = firmware.get(hType);
+            Map<String, Object> firmwareInfo = new HashMap<>();
+            firmwareInfo.put("url", fw.get("url"));
+            firmwareInfo.put("version", fw.get("version"));
+            otaResponse.put("firmware", firmwareInfo);
+            log.info("OTA固件信息：deviceId={}, hType={}, url={}", deviceId, hType, fw.get("url"));
+        }
         otaResponse.put("server_time", Map.of(
             "timestamp", System.currentTimeMillis(),
             "timezone_offset", 480

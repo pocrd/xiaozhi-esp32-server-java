@@ -27,6 +27,14 @@ sms:
 xiaozhi:
   server:
     domain: xz.caringfamily.cn
+  ota:
+    firmware:
+      dx:
+        url: http://res.caringfamily.cn/ota/V2.2.4-DX-2609031742.bin
+        version: "2.2.4"
+      yd:
+        url: http://res.caringfamily.cn/ota/V2.2.4-YD-2609031745.bin
+        version: "2.2.4"
 
 conversation:
   max-messages: 0

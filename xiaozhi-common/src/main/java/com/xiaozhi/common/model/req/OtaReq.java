@@ -23,6 +23,9 @@ public class OtaReq {
     /** 设备类型 */
     private String type;
 
+    /** 硬件类型（dx/yd），由服务端根据 deviceId 判定，后续新设备可由固件直接上报 */
+    private String hType;
+
     /** 客户端 IP */
     private String ip;
 
