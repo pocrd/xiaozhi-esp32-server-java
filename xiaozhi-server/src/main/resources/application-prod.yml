@@ -30,10 +30,10 @@ xiaozhi:
   ota:
     firmware:
       dx:
-        url: http://res.caringfamily.cn/ota/V2.2.4-DX-2609031742.bin
+        url: http://res.caringfamily.cn/ota/V2.2.4-DX-2609041136.bin
         version: "2.2.4"
       yd:
-        url: http://res.caringfamily.cn/ota/V2.2.4-YD-2609031745.bin
+        url: http://res.caringfamily.cn/ota/V2.2.4-YD-2609041127.bin
         version: "2.2.4"
 
 conversation:
