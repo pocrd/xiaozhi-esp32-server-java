@@ -1,15 +1,16 @@
 package com.xiaozhi.communication.message;
 
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.stereotype.Service;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.xiaozhi.communication.common.ChatSession;
 import com.xiaozhi.event.TtsPlaybackCompletedEvent;
-import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.stereotype.Service;
-
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -38,7 +39,9 @@ public class MessageSender {
         }
 
         String jsonMessage = messageJson.toString();
-        log.info("sendTtsMessage发送消息 - SessionId: {}, DeviceId: {}, Message: {}", session.getSessionId(), session.getDeviceIdOrUnknown(), jsonMessage);
+        if (text != null) {
+            log.info("sendTtsMessage发送消息 - SessionId: {}, DeviceId: {}, Message: {}", session.getSessionId(), session.getDeviceIdOrUnknown(), jsonMessage);
+        }
         sendTextMessage(session, jsonMessage);
 
         if ("stop".equals(state)) {

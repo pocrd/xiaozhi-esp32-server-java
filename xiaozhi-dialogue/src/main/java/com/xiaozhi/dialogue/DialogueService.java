@@ -1,43 +1,45 @@
 package com.xiaozhi.dialogue;
 
-import com.xiaozhi.communication.common.ChatSession;
-import com.xiaozhi.communication.common.SessionManager;
-import com.xiaozhi.communication.message.MessageSender;
-import com.xiaozhi.common.model.bo.DeviceBO;
-import com.xiaozhi.common.model.bo.MessageBO;
-import com.xiaozhi.dialogue.audio.VadService;
-import com.xiaozhi.dialogue.llm.factory.PersonaFactory;
-import com.xiaozhi.ai.llm.memory.MessageTimeMetadata;
-import com.xiaozhi.ai.llm.service.IntentService;
-import com.xiaozhi.ai.stt.SttResult;
-import com.xiaozhi.common.model.bo.MessageMetadataBO;
-import org.springframework.ai.chat.messages.UserMessage;
-import com.xiaozhi.dialogue.audio.VadService.VadStatus;
-import com.xiaozhi.dialogue.audio.AecService;
-import com.xiaozhi.dialogue.playback.Player;
-import com.xiaozhi.dialogue.runtime.Persona;
-import com.xiaozhi.enums.DeviceState;
-import com.xiaozhi.event.ChatAbortedEvent;
-import com.xiaozhi.event.SpeechRecognizedEvent;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-import com.xiaozhi.storage.service.StorageServiceFactory;
-import com.xiaozhi.utils.AudioUtils;
-import com.xiaozhi.utils.OpusProcessor;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.util.Assert;
 import org.springframework.util.ObjectUtils;
 import org.springframework.util.StringUtils;
-import reactor.core.publisher.Sinks;
+
+import com.xiaozhi.ai.llm.memory.MessageTimeMetadata;
+import com.xiaozhi.ai.llm.service.IntentService;
+import com.xiaozhi.ai.stt.SttResult;
+import com.xiaozhi.common.model.bo.DeviceBO;
+import com.xiaozhi.common.model.bo.MessageBO;
+import com.xiaozhi.common.model.bo.MessageMetadataBO;
+import com.xiaozhi.communication.common.ChatSession;
+import com.xiaozhi.communication.common.SessionManager;
+import com.xiaozhi.communication.message.MessageSender;
+import com.xiaozhi.dialogue.audio.AecService;
+import com.xiaozhi.dialogue.audio.VadService;
+import com.xiaozhi.dialogue.audio.VadService.VadStatus;
+import com.xiaozhi.dialogue.llm.factory.PersonaFactory;
+import com.xiaozhi.dialogue.playback.Player;
+import com.xiaozhi.dialogue.runtime.Persona;
+import com.xiaozhi.enums.DeviceState;
+import com.xiaozhi.event.ChatAbortedEvent;
+import com.xiaozhi.event.SpeechRecognizedEvent;
+import com.xiaozhi.storage.service.StorageServiceFactory;
+import com.xiaozhi.utils.AudioUtils;
+import com.xiaozhi.utils.OpusProcessor;
 
 import jakarta.annotation.Resource;
-
-import java.nio.file.Path;
-import java.time.Instant;
-import java.util.*;
-import java.util.concurrent.atomic.AtomicBoolean;
-
 import lombok.extern.slf4j.Slf4j;
+import reactor.core.publisher.Sinks;
 /**
  * 对话处理服务
  * 负责处理语音识别和对话生成的业务逻辑
@@ -341,7 +343,7 @@ public class DialogueService{
      * 处理语音唤醒
      */
     public void handleWakeWord(ChatSession session, String text) {
-        log.info("检测到唤醒词: {}, DeviceId: {}", text, session.getDeviceIdOrUnknown());
+        // log.info("检测到唤醒词: {}, DeviceId: {}", text, session.getDeviceIdOrUnknown());
         try {
             // 设置为 SPEAKING 状态，在唤醒响应期间忽略 VAD 检测
             session.transitionTo(DeviceState.SPEAKING);
@@ -387,6 +389,7 @@ public class DialogueService{
             String guaxiang = session.getGuaxiang();
             if (guaxiang != null && !guaxiang.isEmpty()) {
                 text = "卦象是:" + guaxiang + ". " + text;
+                log.info("DeviceId: {}, 卦象是: {}, 语音识别结果:{}", session.getDeviceIdOrUnknown(), guaxiang, text);
             }
 
             UserMessage userMessage = buildUserMessage(text, sttResult);

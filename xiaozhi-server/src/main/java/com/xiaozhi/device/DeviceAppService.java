@@ -85,11 +85,23 @@ public class DeviceAppService {
 
     /** DX 硬件设备（已知 MAC 地址硬编码，后续新设备由固件直接上报 hType） */
     private static final Set<String> DX_SET = Set.of(
+        "device042", "device060",
+        "device063", "device068",
+        "device069", "device075",
+        "device082", "device085",
+        "device092", "device094",
+        "device096"
     );
 
     /** YD 硬件设备 */
     private static final Set<String> YD_SET = Set.of(
-        "device031", "device044"
+        "device004", "device014",
+        "device016", "device019",
+        "device026", "device031",
+        "device034", "device039",
+        "device044", "device046",
+        "device047", "device048",
+        "device049", "device105"
     );
 
 
@@ -102,38 +114,39 @@ public class DeviceAppService {
 
     @Transactional
     public DeviceResp create(DeviceCreateReq req, Integer userId) {
-        VerifyCode verifyCode = deviceRepository.findVerifyCode(req.getCode(), null, null)
-                .orElseThrow(() -> new IllegalArgumentException("无效验证码"));
+        return null;
+        // VerifyCode verifyCode = deviceRepository.findVerifyCode(req.getCode(), null, null)
+        //         .orElseThrow(() -> new IllegalArgumentException("无效验证码"));
 
-        if (!StringUtils.hasText(verifyCode.deviceId())) {
-            throw new IllegalArgumentException("无效验证码");
-        }
+        // if (!StringUtils.hasText(verifyCode.deviceId())) {
+        //     throw new IllegalArgumentException("无效验证码");
+        // }
 
-        // 设备已存在：幂等返回（同一用户）或抛出冲突
-        java.util.Optional<Device> existingDevice = deviceRepository.findById(verifyCode.deviceId());
-        if (existingDevice.isPresent()) {
-            Device d = existingDevice.get();
-            if (userId != null && userId.equals(d.getUserId())) {
-                DeviceResp result = deviceService.get(d.getDeviceId());
-                if (result == null) throw new IllegalStateException("查询设备失败");
-                return result;
-            }
-            throw new IllegalStateException("设备已被其他用户绑定");
-        }
+        // // 设备已存在：幂等返回（同一用户）或抛出冲突
+        // java.util.Optional<Device> existingDevice = deviceRepository.findById(verifyCode.deviceId());
+        // if (existingDevice.isPresent()) {
+        //     Device d = existingDevice.get();
+        //     if (userId != null && userId.equals(d.getUserId())) {
+        //         DeviceResp result = deviceService.get(d.getDeviceId());
+        //         if (result == null) throw new IllegalStateException("查询设备失败");
+        //         return result;
+        //     }
+        //     throw new IllegalStateException("设备已被其他用户绑定");
+        // }
 
-        RoleBO selectedRole = roleService.getDefaultOrFirstBO(userId);
-        if (selectedRole == null) {
-            throw new IllegalStateException("没有配置角色");
-        }
+        // RoleBO selectedRole = roleService.getDefaultOrFirstBO(userId);
+        // if (selectedRole == null) {
+        //     throw new IllegalStateException("没有配置角色");
+        // }
 
-        String name = StringUtils.hasText(verifyCode.type()) ? verifyCode.type() : "小智";
-        Device device = Device.newDevice(verifyCode.deviceId(), name, verifyCode.type(),
-                userId, selectedRole.getRoleId());
-        deviceRepository.save(device);
+        // String name = StringUtils.hasText(verifyCode.type()) ? verifyCode.type() : "小智";
+        // Device device = Device.newDevice(verifyCode.deviceId(), name, verifyCode.type(),
+        //         userId, selectedRole.getRoleId());
+        // deviceRepository.save(device);
 
-        DeviceResp result = deviceService.get(device.getDeviceId());
-        if (result == null) throw new IllegalStateException("添加设备失败");
-        return result;
+        // DeviceResp result = deviceService.get(device.getDeviceId());
+        // if (result == null) throw new IllegalStateException("添加设备失败");
+        // return result;
     }
 
     /**

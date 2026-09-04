@@ -1,17 +1,5 @@
 package com.xiaozhi.communication.server.websocket;
 
-import com.xiaozhi.communication.common.*;
-import com.xiaozhi.communication.domain.*;
-import com.xiaozhi.common.model.bo.DeviceBO;
-import com.xiaozhi.dialogue.llm.tool.mcp.device.DeviceMcpService;
-import com.xiaozhi.utils.JsonUtil;
-import jakarta.annotation.Resource;
-import org.springframework.stereotype.Component;
-import org.springframework.web.socket.BinaryMessage;
-import org.springframework.web.socket.CloseStatus;
-import org.springframework.web.socket.TextMessage;
-import org.springframework.web.socket.handler.AbstractWebSocketHandler;
-import org.springframework.web.socket.WebSocketSession;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.ByteBuffer;
@@ -19,6 +7,25 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
+import org.springframework.stereotype.Component;
+import org.springframework.web.socket.BinaryMessage;
+import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.AbstractWebSocketHandler;
+
+import com.xiaozhi.common.model.bo.DeviceBO;
+import com.xiaozhi.communication.common.ChatSession;
+import com.xiaozhi.communication.common.MessageHandler;
+import com.xiaozhi.communication.common.SessionManager;
+import com.xiaozhi.communication.domain.AudioParams;
+import com.xiaozhi.communication.domain.HelloMessage;
+import com.xiaozhi.communication.domain.HelloMessageResp;
+import com.xiaozhi.communication.domain.Message;
+import com.xiaozhi.dialogue.llm.tool.mcp.device.DeviceMcpService;
+import com.xiaozhi.utils.JsonUtil;
+
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -37,7 +44,6 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession session) {
         Map<String, String> headers = getHeadersFromSession(session);
         String deviceIdAuth = headers.get("x-dubbo-device-id");
-        String token = headers.get("Authorization");
         if (deviceIdAuth == null || deviceIdAuth.isEmpty()) {
             log.error("设备ID为空 - SessionId: {}", session.getId());
             try {
@@ -54,6 +60,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
         xiaoZhiSession.setProtocolVersion(resolveProtocolVersion(
                 parseVersion(session.getHandshakeHeaders().getFirst("Protocol-Version")), session.getId()));
         session.getAttributes().put("deviceId", deviceIdAuth);
+        log.info("deviceId已存入attributes - SessionId: {}, DeviceId: {}, attributes.keys: {}", session.getId(), deviceIdAuth, session.getAttributes().keySet());
         messageHandler.afterConnection(xiaoZhiSession, deviceIdAuth);
         sessionManager.openAudioChannel(xiaoZhiSession.getSessionId(), deviceIdAuth);
 
@@ -69,7 +76,9 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
 
         try {
             var msg = JsonUtil.fromJson(payload, Message.class);
-            log.info("收到消息 - SessionId: {}, DeviceId: {}, JsonNode: {}", sessionId, chatSession != null ? chatSession.getDeviceIdOrUnknown() : "unknown", payload);
+            if ("listen".equals(msg.getType()) || "mcp".equals(msg.getType())) {
+                log.info("收到消息 - SessionId: {}, DeviceId: {}, JsonNode: {}", sessionId, chatSession != null ? chatSession.getDeviceIdOrUnknown() : "unknown", payload);
+            }
             if (Objects.requireNonNull(msg) instanceof HelloMessage m) {
                 handleHelloMessage(session, m);
             } else {
@@ -236,7 +245,9 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
      * 不依赖 ChatSession，避免会话被提前清理后取不到
      */
     private String getDeviceIdFromSession(WebSocketSession session) {
-        Object deviceId = session.getAttributes().get("deviceId");
+        Map<String, Object> attrs = session.getAttributes();
+        Object deviceId = attrs.get("deviceId");
+        log.info("getDeviceIdFromSession - SessionId: {}, deviceId: {}, attributes.keys: {}, class: {}", session.getId(), deviceId, attrs.keySet(), session.getClass().getName());
         return deviceId != null ? deviceId.toString() : "unknown";
     }
 
