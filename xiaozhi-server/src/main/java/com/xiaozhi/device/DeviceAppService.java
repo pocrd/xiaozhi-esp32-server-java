@@ -85,23 +85,31 @@ public class DeviceAppService {
 
     /** DX 硬件设备（已知 MAC 地址硬编码，后续新设备由固件直接上报 hType） */
     private static final Set<String> DX_SET = Set.of(
-        "device042", "device060",
-        "device063", "device068",
-        "device069", "device075",
-        "device082", "device085",
-        "device092", "device094",
-        "device096"
+        "device042", "device055", "device056", "device057", "device058",
+        "device059", "device060", "device061", "device062", "device063",
+        "device064", "device065", "device066", "device067", "device068",
+        "device069", "device070", "device071", "device072", "device073",
+        "device074", "device075", "device076", "device077", "device078",
+        "device079", "device080", "device081", "device082", "device083",
+        "device084", "device085", "device086", "device087", "device088",
+        "device089", "device090", "device091", "device092", "device093",
+        "device094", "device095", "device096", "device097", "device098",
+        "device099", "device100", "device101", "device102", "device103"
     );
 
     /** YD 硬件设备 */
     private static final Set<String> YD_SET = Set.of(
-        "device004", "device014",
-        "device016", "device019",
-        "device026", "device031",
-        "device034", "device039",
-        "device044", "device046",
-        "device047", "device048",
-        "device049", "device105"
+        "device004", "device012", "device013", "device014", "device015",
+        "device016", "device017", "device018", "device019", "device020",
+        "device021", "device022", "device023", "device024", "device025",
+        "device026", "device027", "device028", "device029", "device030",
+        "device031", "device032", "device033", "device034", "device035",
+        "device036", "device037", "device038", "device039", "device040",
+        "device041", "device043", "device044", "device045", "device046",
+        "device047", "device048", "device049", "device050", "device051",
+        "device052", "device053", "device054", "device104", "device105",
+        "device106", "device107", "device108", "device109", "device110",
+        "device111", "device112"
     );
 
 
