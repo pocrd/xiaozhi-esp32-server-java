@@ -6,6 +6,13 @@
     <!-- 定义日志文件存储位置 -->
     <property name="LOG_HOME" value="./logs" />
     
+    <!-- 控制台输出配置 -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{MM-dd HH:mm:ss.SSS} [%thread] %highlight(%-5level) %cyan(%logger{30}:%line) - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
     
     <!-- 文件输出配置 - 所有日志 -->
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
@@ -46,6 +53,7 @@
     <!-- 开发环境配置 -->
     <springProfile name="dev">
         <root level="INFO">
+            <appender-ref ref="CONSOLE" />
             <appender-ref ref="FILE" />
             <appender-ref ref="ERROR_FILE" />
         </root>
@@ -68,6 +76,8 @@
         <root level="INFO">
             <appender-ref ref="FILE" />
             <appender-ref ref="ERROR_FILE" />
+            <!-- 生产环境通常也保留控制台输出，以便在容器环境中查看日志 -->
+            <appender-ref ref="CONSOLE" />
         </root>
         <logger name="com.xiaozhi" level="INFO" />
         <logger name="org.springframework.web" level="ERROR" />
@@ -77,6 +87,7 @@
     
     <!-- 默认配置（如果没有指定profile） -->
     <root level="INFO">
+        <appender-ref ref="CONSOLE" />
         <appender-ref ref="FILE" />
         <appender-ref ref="ERROR_FILE" />
     </root>
