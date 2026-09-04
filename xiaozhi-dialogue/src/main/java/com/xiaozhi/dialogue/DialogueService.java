@@ -397,9 +397,9 @@ public class DialogueService{
             // LLM+TTS
             try {
                 if (epoch != null) {
-                    persona.chat(userMessage, true, epoch);
+                    persona.chat(userMessage, false, epoch);
                 } else {
-                    persona.chat(userMessage, true);
+                    persona.chat(userMessage, false);
                 }
             } catch (Exception e) {
                 log.error("LLM对话处理失败 - DeviceId: {}, {}", session.getDeviceIdOrUnknown(), e.getMessage(), e);

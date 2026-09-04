@@ -1,44 +1,52 @@
 package com.xiaozhi.communication.common;
 
-import com.xiaozhi.communication.domain.*;
-import com.xiaozhi.communication.domain.mcp.device.initialize.DeviceMcpPayload;
-import com.xiaozhi.communication.server.websocket.WebSocketSession;
-import com.xiaozhi.common.model.bo.DeviceBO;
-import com.xiaozhi.common.model.bo.RoleBO;
-import com.xiaozhi.common.model.bo.VerifyCodeBO;
-import com.xiaozhi.device.domain.Device;
-import com.xiaozhi.device.domain.repository.DeviceRepository;
-import com.xiaozhi.device.service.DeviceService;
-import com.xiaozhi.communication.message.MessageSender;
-import com.xiaozhi.dialogue.DialogueService;
-import com.xiaozhi.dialogue.audio.AecService;
-import com.xiaozhi.ai.stt.SttResult;
-import com.xiaozhi.dialogue.llm.factory.PersonaFactory;
-import com.xiaozhi.ai.llm.factory.ChatModelFactory;
-import com.xiaozhi.ai.tool.ToolsGlobalRegistry;
-import com.xiaozhi.ai.tool.ToolsSessionHolder;
-import com.xiaozhi.dialogue.llm.tool.device.IotService;
-import com.xiaozhi.dialogue.audio.VadService;
-import com.xiaozhi.dialogue.playback.Player;
-import com.xiaozhi.dialogue.playback.ScheduledPlayer;
-import com.xiaozhi.ai.tts.TtsServiceFactory;
-import com.xiaozhi.enums.DeviceState;
-import com.xiaozhi.enums.ListenMode;
-import com.xiaozhi.enums.ListenState;
-import com.xiaozhi.event.ChatAbortedEvent;
-import com.xiaozhi.role.service.RoleService;
-import jakarta.annotation.Resource;
-import org.springframework.context.ApplicationContext;
-import org.springframework.stereotype.Component;
-import org.springframework.util.ObjectUtils;
-import org.springframework.util.StringUtils;
-
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.context.ApplicationContext;
+import org.springframework.stereotype.Component;
+import org.springframework.util.ObjectUtils;
+import org.springframework.util.StringUtils;
+
+import com.xiaozhi.ai.llm.factory.ChatModelFactory;
+import com.xiaozhi.ai.stt.SttResult;
+import com.xiaozhi.ai.tool.ToolsGlobalRegistry;
+import com.xiaozhi.ai.tool.ToolsSessionHolder;
+import com.xiaozhi.ai.tts.TtsServiceFactory;
+import com.xiaozhi.common.model.bo.DeviceBO;
+import com.xiaozhi.common.model.bo.RoleBO;
+import com.xiaozhi.common.model.bo.VerifyCodeBO;
+import com.xiaozhi.communication.domain.AbortMessage;
+import com.xiaozhi.communication.domain.AudioParams;
+import com.xiaozhi.communication.domain.DeviceMcpMessage;
+import com.xiaozhi.communication.domain.GoodbyeMessage;
+import com.xiaozhi.communication.domain.HelloMessage;
+import com.xiaozhi.communication.domain.IotMessage;
+import com.xiaozhi.communication.domain.ListenMessage;
+import com.xiaozhi.communication.domain.LogMessage;
+import com.xiaozhi.communication.domain.Message;
+import com.xiaozhi.communication.domain.mcp.device.initialize.DeviceMcpPayload;
+import com.xiaozhi.communication.message.MessageSender;
+import com.xiaozhi.device.domain.Device;
+import com.xiaozhi.device.domain.repository.DeviceRepository;
+import com.xiaozhi.device.service.DeviceService;
+import com.xiaozhi.dialogue.DialogueService;
+import com.xiaozhi.dialogue.audio.AecService;
+import com.xiaozhi.dialogue.audio.VadService;
+import com.xiaozhi.dialogue.llm.factory.PersonaFactory;
+import com.xiaozhi.dialogue.llm.tool.device.IotService;
+import com.xiaozhi.dialogue.playback.Player;
+import com.xiaozhi.dialogue.playback.ScheduledPlayer;
+import com.xiaozhi.enums.DeviceState;
+import com.xiaozhi.enums.ListenMode;
+import com.xiaozhi.enums.ListenState;
+import com.xiaozhi.event.ChatAbortedEvent;
+import com.xiaozhi.role.service.RoleService;
+
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -405,7 +413,7 @@ public class MessageHandler {
 
             case ListenState.Stop:
                 // 停止监听
-                log.info("停止监听 - Mode: {}", chatSession.getMode());
+                // log.info("停止监听 - Mode: {}", chatSession.getMode());
 
                 // audioSinks 在上一轮结束后仍非空，只有 VAD 本轮状态是准确信号
                 if (chatSession.getMode() == ListenMode.Manual

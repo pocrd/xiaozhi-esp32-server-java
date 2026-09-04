@@ -60,7 +60,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
         xiaoZhiSession.setProtocolVersion(resolveProtocolVersion(
                 parseVersion(session.getHandshakeHeaders().getFirst("Protocol-Version")), session.getId()));
         session.getAttributes().put("deviceId", deviceIdAuth);
-        log.info("deviceId已存入attributes - SessionId: {}, DeviceId: {}, attributes.keys: {}", session.getId(), deviceIdAuth, session.getAttributes().keySet());
+        // log.info("deviceId已存入attributes - SessionId: {}, DeviceId: {}, attributes.keys: {}", session.getId(), deviceIdAuth, session.getAttributes().keySet());
         messageHandler.afterConnection(xiaoZhiSession, deviceIdAuth);
         sessionManager.openAudioChannel(xiaoZhiSession.getSessionId(), deviceIdAuth);
 
@@ -247,7 +247,7 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
     private String getDeviceIdFromSession(WebSocketSession session) {
         Map<String, Object> attrs = session.getAttributes();
         Object deviceId = attrs.get("deviceId");
-        log.info("getDeviceIdFromSession - SessionId: {}, deviceId: {}, attributes.keys: {}, class: {}", session.getId(), deviceId, attrs.keySet(), session.getClass().getName());
+        // log.info("getDeviceIdFromSession - SessionId: {}, deviceId: {}, attributes.keys: {}, class: {}", session.getId(), deviceId, attrs.keySet(), session.getClass().getName());
         return deviceId != null ? deviceId.toString() : "unknown";
     }
 
