@@ -388,8 +388,8 @@ public class DialogueService{
             // 如果有卦象信息，加入到识别结果中交给LLM处理
             String guaxiang = session.getGuaxiang();
             if (guaxiang != null && !guaxiang.isEmpty()) {
-                text = "卦象是:" + guaxiang + ". " + text;
-                log.info("DeviceId: {}, 卦象是: {}, 语音识别结果:{}", session.getDeviceIdOrUnknown(), guaxiang, text);
+                text = guaxiang + ". " + text;
+                log.info("DeviceId: {}, {}, 语音识别结果:{}", session.getDeviceIdOrUnknown(), guaxiang, text);
             }
 
             UserMessage userMessage = buildUserMessage(text, sttResult);
