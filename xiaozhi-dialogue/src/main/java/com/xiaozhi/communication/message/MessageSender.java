@@ -28,7 +28,7 @@ public class MessageSender {
 
     public void sendTtsMessage(ChatSession session, String text, String state) {
         if (session == null || !session.isOpen()) {
-            log.error("ChatSession为null 或者已关闭，请检查！DeviceId: {}, {}, {}", session != null ? session.getDeviceIdOrUnknown() : "unknown", Thread.currentThread().getName(), Arrays.toString(Thread.currentThread().getStackTrace()) );
+            log.error("ChatSession为null 或者已关闭，请检查！DeviceId: {}, {}, {}, {}", session != null ? session.getDeviceIdOrUnknown() : "unknown", text, Thread.currentThread().getName(), Arrays.toString(Thread.currentThread().getStackTrace()) );
             return;
         }
         ObjectNode messageJson = objectMapper.createObjectNode();
