@@ -2,6 +2,7 @@ package com.xiaozhi.dialogue.playback;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.xiaozhi.ai.tts.SentenceHelper;
 import com.xiaozhi.ai.tts.TtsService;
@@ -55,12 +56,16 @@ public class FileSynthesizer extends Synthesizer {
      * @param reply 是否本轮 LLM 回复，决定播放器是否把句子计入打断截断
      */
     private void synthesize(Flux<String> stringFlux, boolean reply) {
+        AtomicBoolean firstSentence = new AtomicBoolean(true);
         llmDisposable = new SentenceHelper().convert(stringFlux).subscribe(result -> {
             String text = result.text();
             String mood = result.mood();
+            if (firstSentence.compareAndSet(true, false)) {
+                log.info("LLM已返回首句, 提交TTS合成 - SessionId: {}, DeviceId: {}",
+                        chatSession.getSessionId(), chatSession.getDeviceIdOrUnknown());
+            }
             Flux<Speech> lazyTtsFlux = Flux.create(sink -> {
                 try {
-                    // log.info("TTS输入文本长度: {}", text.length());
                     Path audioPath = ttsService.textToSpeech(text);
                     if (audioPath != null) {
                         List<byte[]> chunks = AudioUtils.readAsPcmChunks(audioPath.toString());
