@@ -80,6 +80,9 @@ logging:
 # 小智扩展配置
 # ============================================================
 xiaozhi:
+  # 设备月度对话限额：每台设备每月最多允许建立的会话次数，超限后拒绝对话
+  dialogue-limit:
+    monthly-max: 300
   # 设备接入鉴权：与 server 模块同配置（token 由 OTA 签发、此处握手校验），配置 secret 即开启
   device-auth:
     secret:

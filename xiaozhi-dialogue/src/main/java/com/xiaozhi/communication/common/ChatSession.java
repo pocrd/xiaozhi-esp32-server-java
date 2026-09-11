@@ -159,6 +159,11 @@ public abstract class ChatSession {
     // --------------------设备mcp-------------------------
     private DeviceMcpHolder deviceMcpHolder = new DeviceMcpHolder();
 
+    /**
+     * 设备月度对话超限标记。为 true 时拒绝处理 listen 等对话类消息。
+     */
+    private volatile boolean dialogueLimited;
+
     public ChatSession(String sessionId) {
         this.sessionId = sessionId;
         this.lastActivityTime = Instant.now();

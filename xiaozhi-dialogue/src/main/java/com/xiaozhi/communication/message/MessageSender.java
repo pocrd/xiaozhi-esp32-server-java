@@ -93,6 +93,21 @@ public class MessageSender {
         // sendTextMessage(session, jsonMessage);
     }
 
+    /**
+     * 发送月度对话超限通知消息。
+     * 消息格式：{"type":"limit","code":"monthly_limit_exceeded"}
+     */
+    public void sendLimitMessage(ChatSession session) {
+        if (session == null || !session.isOpen()) {
+            return;
+        }
+        ObjectNode messageJson = objectMapper.createObjectNode();
+        messageJson.put("type", "limit");
+        messageJson.put("code", "monthly_limit_exceeded");
+        String jsonMessage = messageJson.toString();
+        sendTextMessage(session, jsonMessage);
+    }
+
     public void sendTextMessage(ChatSession chatSession, String message) {
         try {
             if (chatSession == null || !chatSession.isOpen()) {

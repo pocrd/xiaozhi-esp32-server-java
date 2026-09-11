@@ -105,6 +105,9 @@ public class MessageHandler {
     @Resource
     private RedisBroadcast redisBroadcast;
 
+    @Resource
+    private DeviceDialogueCounter deviceDialogueCounter;
+
     // 用于存储设备ID和验证码生成状态的映射
     private final Map<String, Boolean> captchaGenerationInProgress = new ConcurrentHashMap<>();
 
@@ -137,6 +140,15 @@ public class MessageHandler {
         // 如果已绑定，则初始化其他内容
         if (!ObjectUtils.isEmpty(device) && device.getRoleId() != null) {
             initializeBoundDevice(chatSession, device);
+        }
+
+        // 设备月度对话限额检查：每次连接建立计数 +1，超限则标记会话
+        if (device.getRoleId() != null) {
+            boolean exceeded = deviceDialogueCounter.incrementAndCheck(deviceId);
+            if (exceeded) {
+                chatSession.setDialogueLimited(true);
+                messageService.sendLimitMessage(chatSession);
+            }
         }
     }
 
@@ -214,6 +226,12 @@ public class MessageHandler {
     public void handleBinaryMessage(String sessionId, byte[] opusData, long timestamp) {
         ChatSession chatSession = sessionManager.getSession(sessionId);
         if ((chatSession == null || !chatSession.isOpen()) && !vadService.isSessionInitialized(sessionId)) {
+            return;
+        }
+        // 月度对话超限：拒绝处理音频数据
+        if (chatSession != null && chatSession.isDialogueLimited()) {
+            log.info("会话已超限，拒绝处理 - SessionId: {}, DeviceId: {}, Type: {}",
+                    sessionId, chatSession.getDeviceIdOrUnknown(), msg.getType());
             return;
         }
         // 委托给DialogueService处理音频数据
@@ -530,6 +548,15 @@ public class MessageHandler {
 
     public void handleMessage(Message msg, String sessionId) {
         var chatSession = sessionManager.getSession(sessionId);
+        if (chatSession == null) {
+            return;
+        }
+        // 月度对话超限：拒绝处理对话类消息（listen、abort）
+        if (chatSession.isDialogueLimited() && (msg instanceof ListenMessage || msg instanceof AbortMessage)) {
+            log.info("会话已超限，拒绝处理 - SessionId: {}, DeviceId: {}, Type: {}",
+                    sessionId, chatSession.getDeviceIdOrUnknown(), msg.getType());
+            return;
+        }
         switch (msg) {
             case ListenMessage m -> handleListenMessage(chatSession, m);
             case IotMessage m -> handleIotMessage(chatSession, m);

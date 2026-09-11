@@ -7,6 +7,7 @@ import com.xiaozhi.ai.tts.TtsServiceFactory;
 import com.xiaozhi.common.model.bo.DeviceBO;
 import com.xiaozhi.common.model.bo.RoleBO;
 import com.xiaozhi.communication.common.ChatSession;
+import com.xiaozhi.communication.common.DeviceDialogueCounter;
 import com.xiaozhi.communication.common.DeviceRegistry;
 import com.xiaozhi.communication.common.InstanceIdHolder;
 import com.xiaozhi.communication.common.MessageHandler;
@@ -106,6 +107,7 @@ class ProtocolTestHarness {
     private final MessageService messageService = mock(MessageService.class);
     private final DeviceRegistry deviceRegistry = mock(DeviceRegistry.class);
     private final RedisBroadcast redisBroadcast = mock(RedisBroadcast.class);
+    private final DeviceDialogueCounter deviceDialogueCounter = mock(DeviceDialogueCounter.class);
 
     /** deviceId → 设备档案，connect 时按此决定设备是否已绑定角色 */
     private final Map<String, DeviceBO> deviceProfiles = new ConcurrentHashMap<>();
@@ -157,7 +159,8 @@ class ProtocolTestHarness {
                 "aecService", aecService,
                 "deviceRegistry", deviceRegistry,
                 "instanceIdHolder", instanceIdHolder,
-                "redisBroadcast", redisBroadcast);
+                "redisBroadcast", redisBroadcast,
+                "deviceDialogueCounter", deviceDialogueCounter);
 
         inject(webSocketHandler,
                 "sessionManager", sessionManager,
