@@ -230,8 +230,8 @@ public class MessageHandler {
         }
         // 月度对话超限：拒绝处理音频数据
         if (chatSession != null && chatSession.isDialogueLimited()) {
-            log.info("会话已超限，拒绝处理 - SessionId: {}, DeviceId: {}, Type: {}",
-                    sessionId, chatSession.getDeviceIdOrUnknown(), msg.getType());
+            log.info("会话已超限，拒绝处理音频 - SessionId: {}, DeviceId: {}",
+                    sessionId, chatSession.getDeviceIdOrUnknown());
             return;
         }
         // 委托给DialogueService处理音频数据
@@ -551,8 +551,9 @@ public class MessageHandler {
         if (chatSession == null) {
             return;
         }
-        // 月度对话超限：拒绝处理对话类消息（listen、abort）
-        if (chatSession.isDialogueLimited() && (msg instanceof ListenMessage || msg instanceof AbortMessage)) {
+        // 月度对话超限：仅放行协议必需消息（goodbye、log），其余全部拒绝
+        if (chatSession.isDialogueLimited()
+                && !(msg instanceof GoodbyeMessage || msg instanceof LogMessage)) {
             log.info("会话已超限，拒绝处理 - SessionId: {}, DeviceId: {}, Type: {}",
                     sessionId, chatSession.getDeviceIdOrUnknown(), msg.getType());
             return;
