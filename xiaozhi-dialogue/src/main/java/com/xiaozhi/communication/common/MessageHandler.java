@@ -142,13 +142,11 @@ public class MessageHandler {
             initializeBoundDevice(chatSession, device);
         }
 
-        // 设备月度对话限额检查：每次连接建立计数 +1，超限则标记会话
-        if (device.getRoleId() != null) {
-            boolean exceeded = deviceDialogueCounter.incrementAndCheck(deviceId);
-            if (exceeded) {
-                chatSession.setDialogueLimited(true);
-                messageService.sendLimitMessage(chatSession);
-            }
+        // 设备月度对话限额检查：额度已用尽的设备连接时就挡下，不必等它开口；
+        // 逐轮计数与判定在 Persona.chat() 中完成
+        if (device.getRoleId() != null && deviceDialogueCounter.isExhausted(deviceId)) {
+            chatSession.setDialogueLimited(true);
+            messageService.sendLimitMessage(chatSession);
         }
     }
 

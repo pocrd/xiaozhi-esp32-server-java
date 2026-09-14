@@ -30,8 +30,11 @@ import com.xiaozhi.ai.llm.memory.MessageTimeMetadata;
 import com.xiaozhi.ai.stt.SttService;
 import com.xiaozhi.ai.tts.SpeechTokenFilter;
 import com.xiaozhi.common.model.ChatToken;
+import com.xiaozhi.common.model.bo.DeviceBO;
 import com.xiaozhi.communication.common.ChatSession;
+import com.xiaozhi.communication.common.DeviceDialogueCounter;
 import com.xiaozhi.communication.common.SessionManager;
+import com.xiaozhi.communication.message.MessageSender;
 import com.xiaozhi.dialogue.playback.Player;
 import com.xiaozhi.dialogue.playback.Synthesizer;
 import com.xiaozhi.utils.EmojiUtils;
@@ -80,6 +83,15 @@ public class Persona {
     private static final Random FALLBACK_RANDOM = new Random();
 
     private final SessionManager sessionManager;
+
+    /**
+     * 设备月度对话额度计数器。每轮对话消费一次额度，额度用尽后拒绝本轮并通知设备。
+     * 测试直接用 builder 构造 Persona 时可以不注入，为 null 视为不限额。
+     */
+    private DeviceDialogueCounter dialogueCounter;
+
+    /** 额度用尽时下发 limit 消息，与 dialogueCounter 由同一处注入 */
+    private MessageSender messageSender;
     
     @Setter
     private String sessionId;
@@ -475,6 +487,10 @@ public class Persona {
      */
     public void chat(UserMessage userMessage, boolean useFunctionCall, long epoch){
         ChatSession session = getSession();
+        // 月度对话额度已用尽：本轮不再进 LLM，只把 limit 消息下发给设备
+        if (isDialogueExhausted(session)) {
+            return;
+        }
         Instant now = Instant.now();
         // 用户消息时间取 STT 出结果那一刻（构造时已写入）
         Turn turn = new Turn(now.toEpochMilli(), userMessage, MessageTimeMetadata.getTimeMillis(userMessage),
@@ -491,6 +507,9 @@ public class Persona {
             return;
         }
 
+        // 本轮确定要生成回复了才消费额度，还没开口就被打断的轮次不占
+        consumeDialogueQuota(session);
+
         // 工具路由、RAG 召回都在订阅时才执行，准备期间被打断就不再调 LLM
         Flux<ChatResponse> chatResponseFlux = Flux.defer(() -> chatStream(turn, useFunctionCall));
         Flux<ChatToken> tokenFlux = convert(chatResponseFlux);
@@ -501,6 +520,44 @@ public class Persona {
         if (turn.phase.get() == Phase.INTERRUPTED) {
             synthesizer.cancel();
         }
+    }
+
+    /**
+     * 月度对话额度是否已用尽。用尽时标记会话并下发 limit 消息，
+     * 之后设备发来的对话类消息由 MessageHandler 统一拦下。
+     */
+    private boolean isDialogueExhausted(ChatSession session) {
+        String deviceId = quotaDeviceId(session);
+        if (deviceId == null || !dialogueCounter.isExhausted(deviceId)) {
+            return false;
+        }
+        log.info("设备月度对话额度已用尽，拒绝本轮对话 - SessionId: {}, DeviceId: {}", sessionId, deviceId);
+        session.setDialogueLimited(true);
+        if (messageSender != null) {
+            messageSender.sendLimitMessage(session);
+        }
+        return true;
+    }
+
+    /**
+     * 本轮对话消费一次月度额度
+     */
+    private void consumeDialogueQuota(ChatSession session) {
+        String deviceId = quotaDeviceId(session);
+        if (deviceId != null) {
+            dialogueCounter.increment(deviceId);
+        }
+    }
+
+    /**
+     * 参与额度计数的设备 ID。计数器未注入（如测试）或设备未绑定时返回 null，表示不计量
+     */
+    private String quotaDeviceId(ChatSession session) {
+        if (dialogueCounter == null || session == null) {
+            return null;
+        }
+        DeviceBO device = session.getDevice();
+        return device != null ? device.getDeviceId() : null;
     }
 
     /**

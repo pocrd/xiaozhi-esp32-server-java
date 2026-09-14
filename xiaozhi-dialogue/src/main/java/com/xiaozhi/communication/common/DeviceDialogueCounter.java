@@ -14,9 +14,9 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * 设备月度对话计数器。
  * <p>
- * 通过 Redis 维护每台设备每月的会话次数，用于限额控制：
- * 每次 WebSocket 连接建立（即创建一个 ChatSession）计数 +1，
- * 当月超过配置上限后拒绝后续对话。
+ * 通过 Redis 维护每台设备每月的对话轮次，用于限额控制：
+ * 每轮对话提交语音合成前计数 +1，连上却不说话、还没开口就被打断的轮次不占额度。
+ * 额度是否用尽在连接建立和每轮对话开始前各判定一次。
  * <p>
  * Redis key 格式：{@code xiaozhi:dialogue:count:{deviceId}:{yyyy-MM}}
  */
@@ -36,18 +36,20 @@ public class DeviceDialogueCounter {
     private StringRedisTemplate stringRedisTemplate;
 
     /**
-     * 每月对话上限，默认 300
+     * 每月对话上限，默认 300；配置为 0 或负数表示不限额
      */
     @Value("${xiaozhi.dialogue-limit.monthly-max:300}")
     private int monthlyMax;
 
     /**
-     * 递增设备当月对话计数并判断是否超限。
+     * 递增设备当月对话计数，每轮对话调用一次。
      *
      * @param deviceId 设备 ID
-     * @return true 表示已超限，应拒绝对话
      */
-    public boolean incrementAndCheck(String deviceId) {
+    public void increment(String deviceId) {
+        if (monthlyMax <= 0) {
+            return;
+        }
         String key = buildKey(deviceId);
         try {
             Long count = stringRedisTemplate.opsForValue().increment(key);
@@ -55,14 +57,34 @@ public class DeviceDialogueCounter {
                 // 首次计数，设置过期时间
                 stringRedisTemplate.expire(key, KEY_TTL);
             }
-            boolean exceeded = count != null && count > monthlyMax;
-            if (exceeded) {
-                log.info("设备月度对话超限 - DeviceId: {}, Count: {}, Max: {}", deviceId, count, monthlyMax);
-            }
-            return exceeded;
+            log.debug("设备月度对话计数 - DeviceId: {}, Count: {}, Max: {}", deviceId, count, monthlyMax);
         } catch (Exception e) {
             // Redis 异常时放行，不影响正常使用
             log.error("设备对话计数异常，已放行 - DeviceId: {}", deviceId, e);
+        }
+    }
+
+    /**
+     * 只读判断设备当月额度是否已用尽，不递增计数。
+     * <p>
+     * 连接建立与每轮对话开始前调用，把额度已耗尽的设备挡在对话之外。
+     *
+     * @param deviceId 设备 ID
+     * @return true 表示本月额度已用尽
+     */
+    public boolean isExhausted(String deviceId) {
+        if (monthlyMax <= 0) {
+            return false;
+        }
+        try {
+            boolean exhausted = getCount(deviceId) >= monthlyMax;
+            if (exhausted) {
+                log.info("设备月度对话额度已用尽 - DeviceId: {}, Max: {}", deviceId, monthlyMax);
+            }
+            return exhausted;
+        } catch (Exception e) {
+            // Redis 异常时放行，不影响正常使用
+            log.error("查询设备对话计数异常，已放行 - DeviceId: {}", deviceId, e);
             return false;
         }
     }

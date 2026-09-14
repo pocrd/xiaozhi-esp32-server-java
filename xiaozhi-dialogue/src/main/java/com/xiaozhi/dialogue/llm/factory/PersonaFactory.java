@@ -1,6 +1,7 @@
 package com.xiaozhi.dialogue.llm.factory;
 
 import com.xiaozhi.communication.common.ChatSession;
+import com.xiaozhi.communication.common.DeviceDialogueCounter;
 import com.xiaozhi.communication.common.SessionManager;
 import com.xiaozhi.communication.message.MessageSender;
 import com.xiaozhi.common.model.bo.DeviceBO;
@@ -69,6 +70,8 @@ public class PersonaFactory {
     private DialogueListener dialogueListener;
     @Resource
     private StorageServiceFactory storageServiceFactory;
+    @Resource
+    private DeviceDialogueCounter deviceDialogueCounter;
 
     /**
      * 构建完整的 Persona 实例。
@@ -121,6 +124,8 @@ public class PersonaFactory {
 
         Persona persona = Persona.builder()
                 .sessionManager(sessionManager)
+                .dialogueCounter(deviceDialogueCounter)
+                .messageSender(sessionMessageService)
                 .sessionId(session.getSessionId())
                 .conversation(conversation)
                 .sttService(sttService)
