@@ -13,6 +13,7 @@ avatar/
 /audio/
 /data/
 /models/
+/logs/
 *.zip
 /logs/
 *.tmp
