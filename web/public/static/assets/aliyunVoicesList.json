@@ -1113,7 +1113,7 @@
     "model": "qwen3-tts-flash-realtime"
   },
   {
-    "label": "龙三叔",
+    "label": "龙三叔qwen",
     "value": "qwen-audio-3.1-tts-flash:longsanshu_v3.1",
     "gender": "male",
     "provider": "aliyun",
