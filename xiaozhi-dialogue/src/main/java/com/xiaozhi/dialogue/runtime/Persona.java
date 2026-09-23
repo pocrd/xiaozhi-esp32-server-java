@@ -240,8 +240,16 @@ public class Persona {
             // 首 token 时刻即助手消息创建时间；播放器落盘音频文件也以此关联到助手消息
             Instant assistantMessageCreatedAt = Instant.now();
             boolean isFirst = turn.ttft.compareAndSet(null, assistantMessageCreatedAt);
-            if (isFirst && player.getOpusRecorder() != null) {
-                player.getOpusRecorder().setAssistantMessageCreatedAt(assistantMessageCreatedAt);
+            if (isFirst) {
+                org.springframework.ai.chat.metadata.ChatResponseMetadata metadata = chatResponse.getMetadata();
+                log.info("[LLM] LLM已返回首句 - SessionId: {}, DeviceId: {}, Model: {}, RequestId: {}",
+                        sessionId,
+                        getSession().getDeviceIdOrUnknown(),
+                        metadata != null ? metadata.getModel() : null,
+                        metadata != null ? metadata.getId() : null);
+                if (player.getOpusRecorder() != null) {
+                    player.getOpusRecorder().setAssistantMessageCreatedAt(assistantMessageCreatedAt);
+                }
             }
         });
         return new MessageAggregator().aggregate(chatFlux, chatResponse -> completeTurn(turn, chatResponse));

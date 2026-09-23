@@ -1113,6 +1113,13 @@
     "model": "qwen3-tts-flash-realtime"
   },
   {
+    "label": "龙三叔",
+    "value": "qwen-audio-3.1-tts-flash:longsanshu_v3.1",
+    "gender": "male",
+    "provider": "aliyun",
+    "model": "qwen-audio-3.1-tts-flash"
+  },
+  {
     "label": "龙安洋(阳光大男孩)",
     "value": "cosyvoice-v3-plus:longanyang",
     "gender": "male",

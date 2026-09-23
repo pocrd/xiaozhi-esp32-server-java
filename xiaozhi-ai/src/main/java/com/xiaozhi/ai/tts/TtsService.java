@@ -72,4 +72,17 @@ public interface TtsService {
   Path textToSpeech(String text) throws Exception;
 
 
+  /**
+   * 将文本转换为语音，并携带供应商 RequestId（用于对帐）。
+   * <p>默认实现委托给 {@link #textToSpeech(String)} 且 requestId 为 null；
+   * 能拿到 RequestId 的实现（如阿里云）应覆写此方法。
+   *
+   * @param text 要转换为语音的文本
+   * @return 包含音频路径与 RequestId 的结果
+   */
+  default TtsResult textToSpeechWithId(String text) throws Exception {
+    return TtsResult.of(textToSpeech(text));
+  }
+
+
 }

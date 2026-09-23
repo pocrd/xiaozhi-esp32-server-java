@@ -2,9 +2,9 @@ package com.xiaozhi.dialogue.playback;
 
 import java.nio.file.Path;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.xiaozhi.ai.tts.SentenceHelper;
+import com.xiaozhi.ai.tts.TtsResult;
 import com.xiaozhi.ai.tts.TtsService;
 import com.xiaozhi.common.Speech;
 import com.xiaozhi.communication.common.ChatSession;
@@ -56,18 +56,19 @@ public class FileSynthesizer extends Synthesizer {
      * @param reply 是否本轮 LLM 回复，决定播放器是否把句子计入打断截断
      */
     private void synthesize(Flux<String> stringFlux, boolean reply) {
-        AtomicBoolean firstSentence = new AtomicBoolean(true);
         llmDisposable = new SentenceHelper().convert(stringFlux).subscribe(result -> {
             String text = result.text();
             String mood = result.mood();
-            if (firstSentence.compareAndSet(true, false)) {
-                log.info("LLM已返回首句, 提交TTS合成 - SessionId: {}, DeviceId: {}",
-                        chatSession.getSessionId(), chatSession.getDeviceIdOrUnknown());
-            }
             Flux<Speech> lazyTtsFlux = Flux.create(sink -> {
                 try {
-                    Path audioPath = ttsService.textToSpeech(text);
+                    TtsResult ttsResult = ttsService.textToSpeechWithId(text);
+                    Path audioPath = ttsResult != null ? ttsResult.path() : null;
                     if (audioPath != null) {
+                        // TTS 服务为跨会话共享实例，RequestId 由结果实体带出，在此关联 SessionId/DeviceId 打印以便对帐
+                        if (ttsResult.requestId() != null) {
+                            log.info("[TTS] 语音合成对帐 - SessionId: {}, DeviceId: {}, RequestId: {}",
+                                    chatSession.getSessionId(), chatSession.getDeviceIdOrUnknown(), ttsResult.requestId());
+                        }
                         List<byte[]> chunks = AudioUtils.readAsPcmChunks(audioPath.toString());
                         boolean first = true;
                         for (byte[] chunk : chunks) {

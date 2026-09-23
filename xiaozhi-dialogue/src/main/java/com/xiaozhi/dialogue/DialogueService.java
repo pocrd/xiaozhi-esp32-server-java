@@ -286,6 +286,12 @@ public class DialogueService{
                         turnSink.asFlux(),
                         partialText -> onSttPartialText(session, partialText, bargeIn));
 
+                // STT 服务为跨会话共享实例，RequestId 由结果实体带出，在此关联 SessionId/DeviceId 打印以便对帐
+                if (sttResult != null && sttResult.requestId() != null) {
+                    log.info("[STT] 语音识别完成 - SessionId: {}, DeviceId: {}, RequestId: {}",
+                            session.getSessionId(), session.getDeviceIdOrUnknown(), sttResult.requestId());
+                }
+
                 // 本轮已被新一轮或 abort 取代，结果作废，否则过期文本会触发一轮多余对话；
                 // 暂停的播放仍由本轮终稿决定去留
                 if (session.getAudioSinks() != turnSink) {

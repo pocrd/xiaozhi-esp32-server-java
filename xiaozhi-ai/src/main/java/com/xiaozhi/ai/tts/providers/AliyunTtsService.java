@@ -16,6 +16,7 @@ import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.alibaba.dashscope.aigc.multimodalconversation.AudioParameters;
 import com.alibaba.dashscope.aigc.multimodalconversation.MultiModalConversation;
@@ -24,6 +25,7 @@ import com.alibaba.dashscope.aigc.multimodalconversation.MultiModalConversationR
 import com.alibaba.dashscope.audio.tts.SpeechSynthesisAudioFormat;
 import com.alibaba.dashscope.audio.tts.SpeechSynthesisParam;
 import com.alibaba.dashscope.audio.tts.SpeechSynthesizer;
+import com.xiaozhi.ai.tts.TtsResult;
 import com.xiaozhi.ai.tts.TtsService;
 import com.xiaozhi.ai.tts.XiaozhiTtsOptions;
 import com.xiaozhi.common.model.bo.ConfigBO;
@@ -122,18 +124,21 @@ public class AliyunTtsService implements TtsService {
     }
 
     /**
-     * 解析千问音色参数，支持格式：
-     * 1. "qwen3-tts-flash-realtime:Cherry" - 指定模型和音色（冒号分隔）
-     * 2. "qwen3-tts-instruct-flash-realtime:Cherry" - 指定模型和音色（冒号分隔）
-     * 3. "qwen-tts-realtime:Cherry" - 指定模型和音色（冒号分隔）
-     * 4. "Cherry" - 只有音色，默认使用 qwen3-tts-flash-realtime
+     * 解析千问（Qwen-TTS 系列，走 MultiModalConversation HTTP 通道）音色参数，支持格式：
+     * 1. "qwen3-tts-flash:Cherry" - 指定模型和音色（冒号分隔）
+     * 2. "qwen3-tts-instruct-flash:Cherry" - 指定模型和音色（冒号分隔）
+     * 3. "qwen-tts-latest:Cherry" - 指定模型和音色（冒号分隔）
+     * 4. "Cherry" - 只有音色，默认使用 qwen3-tts-instruct-flash
+     *
+     * 注意：Qwen-Audio-TTS 系列（如 qwen-audio-3.1-tts-flash）不走这里，
+     * 它使用 ttsv2 SDK，与 CosyVoice 共用同一条通道，见 parseCosyVoiceParam。
      *
      * @param voiceParam 音色参数
      * @return [模型名, 音色名]
      */
     private String[] parseQwenVoiceParam(String voiceParam) {
         if (voiceParam == null || voiceParam.isEmpty()) {
-            return new String[]{"qwen3-tts-flash-realtime", voiceParam};
+            return new String[]{"qwen3-tts-instruct-flash", voiceParam};
         }
 
         // 检查是否包含模型前缀（冒号分隔格式）
@@ -156,14 +161,16 @@ public class AliyunTtsService implements TtsService {
     }
 
     /**
-     * 解析音色参数，支持格式：
+     * 解析 ttsv2 通道（CosyVoice + Qwen-Audio-TTS 共用）的音色参数，支持格式：
      * 1. "cosyvoice-v3-plus-voiceclone-xxx" - 音色克隆返回的格式，自动识别模型前缀
      * 2. "cosyvoice-v3-flash-voiceclone-xxx" - 音色克隆返回的格式，自动识别模型前缀
      * 3. "cosyvoice-v2-voiceclone-xxx" - 音色克隆返回的格式，自动识别模型前缀
      * 4. "cosyvoice-v2:longanyang" - 指定模型和音色（冒号分隔）
      * 5. "cosyvoice-v3-flash:longanyang" - 指定模型和音色（冒号分隔）
      * 6. "cosyvoice-v3-plus:longanyang" - 指定模型和音色（冒号分隔）
-     * 7. "longanyang" - 只有音色，默认使用 cosyvoice-v2
+     * 7. "qwen-audio-3.1-tts-flash:longsanshu_v3.1" - Qwen-Audio-TTS 系列
+     * 8. "qwen-audio-3.0-tts-flash:longanhuan_v3.6" - Qwen-Audio-TTS 系列
+     * 9. "longanyang" - 只有音色，默认使用 cosyvoice-v2
      *
      * @param voiceParam 音色参数
      * @return [模型名, 音色名]
@@ -182,24 +189,25 @@ public class AliyunTtsService implements TtsService {
             return new String[]{"cosyvoice-v2", voiceParam};
         }
 
-        // 检查是否包含模型前缀（冒号分隔格式，如：cosyvoice-v3-plus:longanyang）
+        // 检查是否包含模型前缀（冒号分隔格式，如：cosyvoice-v3-plus:longanyang 或 qwen-audio-3.1-tts-flash:longsanshu_v3.1）
         if (voiceParam.contains(":")) {
             String[] parts = voiceParam.split(":", 2);
             String model = parts[0];
             String voice = parts.length > 1 ? parts[1] : "";
 
-            // 验证模型名称是否为有效的 CosyVoice 模型
-            if ("cosyvoice-v2".equals(model) || "cosyvoice-v3-flash".equals(model) || "cosyvoice-v3-plus".equals(model) 
-                || "cosyvoice-v3.5-flash".equals(model) || "cosyvoice-v3.5-plus".equals(model)) {
+            // 验证模型名称是否为有效的 ttsv2 通道模型（CosyVoice 或 Qwen-Audio-TTS）
+            if ("cosyvoice-v2".equals(model) || "cosyvoice-v3-flash".equals(model) || "cosyvoice-v3-plus".equals(model)
+                || "cosyvoice-v3.5-flash".equals(model) || "cosyvoice-v3.5-plus".equals(model)
+                || (model.startsWith("qwen-audio-") && model.contains("tts"))) {
                 return new String[]{model, voice};
             }
             // 如果模型名称无效，将整个字符串视为音色名
-            log.warn("无效的 CosyVoice 模型名称: {}, 使用默认模型 cosyvoice-v2", model);
-            return new String[]{"cosyvoice-v2", voiceParam};
+            log.warn("无效的 CosyVoice/Qwen-Audio-TTS 模型名称: {}, 使用默认模型 cosyvoice-v3", model);
+            return new String[]{"cosyvoice-v3-flash", voiceParam};
         }
 
         // 没有模型前缀，使用默认模型
-        return new String[]{"cosyvoice-v2", voiceParam};
+        return new String[]{"cosyvoice-v3-flash", voiceParam};
     }
 
     @Override
@@ -214,25 +222,36 @@ public class AliyunTtsService implements TtsService {
 
     @Override
     public Path textToSpeech(String text) throws Exception {
-        try {
-            if (getVoiceName().contains("sambert")) {
-                return ttsSambert(text);
-            } else {
-                //log.info("使用{}模型进行语音合成", getVoiceName());
+        TtsResult result = textToSpeechWithId(text);
+        return result != null ? result.path() : null;
+    }
 
-                if (getVoiceName().contains("qwen")) {
-                    return ttsQwen(text);
-                } else {
-                    return ttsCosyvoice(text);
-                }
+    @Override
+    public TtsResult textToSpeechWithId(String text) throws Exception {
+        try {
+            String voiceName = getVoiceName();
+            if (voiceName.contains("sambert")) {
+                return ttsSambert(text);
             }
+            //log.info("使用{}模型进行语音合成", voiceName);
+
+            // Qwen-Audio-TTS 与 CosyVoice 共用 dashscope ttsv2 SDK 通道，voice 直接透传字符串，
+            // 必须先于 "qwen" 关键字判断，否则会被误路由到 MultiModalConversation 通道。
+            if (voiceName.startsWith("qwen-audio-") || voiceName.startsWith("cosyvoice-")) {
+                return ttsCosyvoice(text);
+            }
+
+            if (voiceName.contains("qwen")) {
+                return ttsQwen(text);
+            }
+            return ttsCosyvoice(text);
         } catch (Exception e) {
             log.error("语音合成aliyun -使用{}模型语音合成失败：", getVoiceName(), e);
             throw new Exception("语音合成失败");
         }
     }
 
-    private Path ttsQwen(String text) {
+    private TtsResult ttsQwen(String text) {
         int attempts = 0;
         // 解析音色参数
         String[] parsed = parseQwenVoiceParam(getVoiceName());
@@ -242,8 +261,7 @@ public class AliyunTtsService implements TtsService {
             try {
                 AudioParameters.Voice voice = VOICE_MAP.get(actualVoiceName);
                 MultiModalConversationParam param = MultiModalConversationParam.builder()
-                        // 非实时SDK（MultiModalConversation）只支持 qwen3-tts-flash，不能用 realtime 模型名
-                        .model("qwen3-tts-instruct-flash")
+                        .model(parsed[0])
                         .apiKey(apiKey)
                         .text(text)
                         .parameter("volume", 100)
@@ -291,6 +309,8 @@ public class AliyunTtsService implements TtsService {
                 }
 
                 String audioUrl = result.getOutput().getAudio().getUrl();
+                // RequestId 随结果带出，由调用方关联 SessionId 打印对帐
+                String requestId = result.getRequestId();
                 Path outPath = Path.of(outputPath, getAudioFileName());
 
                 // 下载 WAV（24kHz），重采样到 16kHz 后保存
@@ -328,7 +348,7 @@ public class AliyunTtsService implements TtsService {
                     continue;
                 }
 
-                return outPath;
+                return new TtsResult(outPath, requestId);
             } catch (Exception e) {
                 attempts++;
                 if (attempts < MAX_RETRY_ATTEMPTS) {
@@ -350,8 +370,9 @@ public class AliyunTtsService implements TtsService {
         return null;
     }
 
-    // cosyvoice默认并发只有3个，所以需要增加一个重试机制
-    private Path ttsCosyvoice(String text) {
+    // ttsv2 通道（CosyVoice + Qwen-Audio-TTS 共用）
+    // cosyvoice 默认并发只有 3 个，qwen-audio-tts RPS 也较低，所以需要重试机制
+    private TtsResult ttsCosyvoice(String text) {
         int attempts = 0;
         // 解析音色参数，获取模型名和音色名
         String[] parsed = parseCosyVoiceParam(getVoiceName());
@@ -372,11 +393,14 @@ public class AliyunTtsService implements TtsService {
                                 .build();
 
                 // 使用共享线程池
+                AtomicReference<String> requestIdRef = new AtomicReference<>();
                 Future<ByteBuffer> future = sharedExecutor.submit(() -> {
                     com.alibaba.dashscope.audio.ttsv2.SpeechSynthesizer synthesizer =
                         new com.alibaba.dashscope.audio.ttsv2.SpeechSynthesizer(param, null);
                     try {
-                        return synthesizer.call(text);
+                        ByteBuffer audio = synthesizer.call(text);
+                        requestIdRef.set(synthesizer.getLastRequestId());
+                        return audio;
                     } finally {
                         // 主动关闭WebSocket连接，避免僵尸连接占满连接池
                         try {
@@ -425,7 +449,8 @@ public class AliyunTtsService implements TtsService {
                     log.error("语音合成aliyun -使用{}模型语音合成失败 - 音色: {}", modelName, actualVoiceName, e);
                     return null;
                 }
-                return outPath;
+                // RequestId 随结果带出，由调用方关联 SessionId 打印对帐
+                return new TtsResult(outPath, requestIdRef.get());
             } catch (Exception e) {
                 attempts++;
                 if (attempts < MAX_RETRY_ATTEMPTS) {
@@ -447,7 +472,7 @@ public class AliyunTtsService implements TtsService {
         return null;
     }
 
-    public Path ttsSambert(String text) {
+    public TtsResult ttsSambert(String text) {
         int attempts = 0;
         while (attempts < MAX_RETRY_ATTEMPTS) {
             try {
@@ -462,9 +487,12 @@ public class AliyunTtsService implements TtsService {
                         .build();
                 
                 // 使用共享线程池
+                AtomicReference<String> requestIdRef = new AtomicReference<>();
                 Future<ByteBuffer> future = sharedExecutor.submit(() -> {
                     SpeechSynthesizer synthesizer = new SpeechSynthesizer();
-                    return synthesizer.call(param);
+                    ByteBuffer audio = synthesizer.call(param);
+                    requestIdRef.set(synthesizer.getLastRequestId());
+                    return audio;
                 });
                 
                 // 等待结果，设置超时
@@ -505,7 +533,8 @@ public class AliyunTtsService implements TtsService {
                     log.error("语音合成aliyun - 使用{}模型失败：", getVoiceName(), e);
                     return null;
                 }
-                return outPath;
+                // RequestId 随结果带出，由调用方关联 SessionId 打印对帐
+                return new TtsResult(outPath, requestIdRef.get());
             } catch (Exception e) {
                 attempts++;
                 if (attempts < MAX_RETRY_ATTEMPTS) {

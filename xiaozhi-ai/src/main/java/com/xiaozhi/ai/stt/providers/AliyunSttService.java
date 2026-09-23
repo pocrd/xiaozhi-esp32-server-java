@@ -176,10 +176,12 @@ public class AliyunSttService implements SttService {
 
         // 多句合并：文本拼接，情感取置信度最高的一句
         try {
-            return recognition.reduce(new SttResultAccumulator(), SttResultAccumulator::add)
+            SttResult sttResult = recognition.reduce(new SttResultAccumulator(), SttResultAccumulator::add)
                     .blockOptional()
                     .map(SttResultAccumulator::toSttResult)
                     .orElse(SttResult.textOnly(""));
+            // 把阿里云 RequestId 挂到结果上，由调用方关联 SessionId 打印对帐
+            return sttResult.withRequestId(recognizer.getLastRequestId());
         } finally {
             // 主动关闭WebSocket连接，避免连接进入"无引用状态"后等待61秒才释放
             try {
@@ -318,11 +320,13 @@ public class AliyunSttService implements SttService {
             }
         }
 
+        // 实时翻译识别的 RequestId 同样挂到结果上，由调用方关联 SessionId 打印对帐
+        String requestId = translator.getLastRequestId();
         if (hasError.get()) {
-            return SttResult.textOnly("");
+            return SttResult.textOnly("").withRequestId(requestId);
         }
 
-        return SttResult.textOnly(result.toString());
+        return SttResult.textOnly(result.toString()).withRequestId(requestId);
     }
 
     /**
@@ -479,10 +483,13 @@ public class AliyunSttService implements SttService {
             }
         }
 
+        // 实时 WebSocket 无传统 RequestId，用会话 SessionId 作为对帐标识
+        OmniRealtimeConversation conv = conversationRef.get();
+        String requestId = conv != null ? conv.getSessionId() : null;
         if (hasError.get()) {
-            return SttResult.textOnly("");
+            return SttResult.textOnly("").withRequestId(requestId);
         }
 
-        return SttResult.textOnly(result.toString());
+        return SttResult.textOnly(result.toString()).withRequestId(requestId);
     }
 }
