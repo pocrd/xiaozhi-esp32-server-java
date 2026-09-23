@@ -286,10 +286,13 @@ public class DialogueService{
                         turnSink.asFlux(),
                         partialText -> onSttPartialText(session, partialText, bargeIn));
 
-                // STT 服务为跨会话共享实例，RequestId 由结果实体带出，在此关联 SessionId/DeviceId 打印以便对帐
-                if (sttResult != null && sttResult.requestId() != null) {
-                    log.info("[STT] 语音识别完成 - SessionId: {}, DeviceId: {}, RequestId: {}",
-                            session.getSessionId(), session.getDeviceIdOrUnknown(), sttResult.requestId());
+                // STT 服务为跨会话共享实例，RequestId 由结果实体带出，在此关联 SessionId/DeviceId 打印以便对帐。
+                // 实时 WS 识别无传统 RequestId（用 SessionId 兜底），故额外带上识别文本字符数(Chars)供「时间窗+用量」对帐。
+                if (sttResult != null) {
+                    String sttRequestId = sttResult.requestId() != null ? sttResult.requestId() : "-";
+                    int sttChars = sttResult.text() != null ? sttResult.text().length() : 0;
+                    log.info("[STT] 语音识别对帐 - SessionId: {}, DeviceId: {}, RequestId: {}, Chars: {}",
+                            session.getSessionId(), session.getDeviceIdOrUnknown(), sttRequestId, sttChars);
                 }
 
                 // 本轮已被新一轮或 abort 取代，结果作废，否则过期文本会触发一轮多余对话；
@@ -395,7 +398,6 @@ public class DialogueService{
             String guaxiang = session.getGuaxiang();
             if (guaxiang != null && !guaxiang.isEmpty()) {
                 text = guaxiang + ". " + text;
-                log.info("DeviceId: {}, {}, 语音识别结果:{}", session.getDeviceIdOrUnknown(), guaxiang, text);
             }
 
             UserMessage userMessage = buildUserMessage(text, sttResult);

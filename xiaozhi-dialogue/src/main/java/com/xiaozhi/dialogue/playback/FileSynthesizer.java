@@ -64,11 +64,12 @@ public class FileSynthesizer extends Synthesizer {
                     TtsResult ttsResult = ttsService.textToSpeechWithId(text);
                     Path audioPath = ttsResult != null ? ttsResult.path() : null;
                     if (audioPath != null) {
-                        // TTS 服务为跨会话共享实例，RequestId 由结果实体带出，在此关联 SessionId/DeviceId 打印以便对帐
-                        if (ttsResult.requestId() != null) {
-                            log.info("[TTS] 语音合成对帐 - SessionId: {}, DeviceId: {}, RequestId: {}",
-                                    chatSession.getSessionId(), chatSession.getDeviceIdOrUnknown(), ttsResult.requestId());
-                        }
+                        // TTS 服务为跨会话共享实例，RequestId 由结果实体带出，在此关联 SessionId/DeviceId 打印以便对帐。
+                        // DashScope WS 流式的 RequestId 是客户端随机 ID，不落审计库，故额外带上合成字符数(Chars)，
+                        // 供离线脚本用「时间窗+字符数」与云端审计对帐；RequestId 为空时打印占位符 '-'。
+                        String ttsRequestId = ttsResult.requestId() != null ? ttsResult.requestId() : "-";
+                        log.info("[TTS] 语音合成对帐 - SessionId: {}, DeviceId: {}, RequestId: {}, Chars: {}",
+                                chatSession.getSessionId(), chatSession.getDeviceIdOrUnknown(), ttsRequestId, text.length());
                         List<byte[]> chunks = AudioUtils.readAsPcmChunks(audioPath.toString());
                         boolean first = true;
                         for (byte[] chunk : chunks) {

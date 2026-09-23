@@ -269,6 +269,17 @@ public class Persona {
             }
             AssistantMessage assistant = stripMetaTags(chatResponse.getResult().getOutput());
             Usage usage = chatResponse.getMetadata() != null ? chatResponse.getMetadata().getUsage() : null;
+            // LLM 走 HTTP/OpenAI 兼容通道，metadata.getId() 即服务端 request_id，可精确匹配百炼审计日志。
+            // 在完成回合处统一打印带 token 用量的对帐行（此时流式已聚合出 usage）。
+            org.springframework.ai.chat.metadata.ChatResponseMetadata llmMeta = chatResponse.getMetadata();
+            String llmRequestId = (llmMeta != null && llmMeta.getId() != null) ? llmMeta.getId() : "-";
+            String llmModel = llmMeta != null ? llmMeta.getModel() : null;
+            int promptTokens = (usage != null && usage.getPromptTokens() != null) ? usage.getPromptTokens() : 0;
+            int completionTokens = (usage != null && usage.getCompletionTokens() != null) ? usage.getCompletionTokens() : 0;
+            int totalTokens = (usage != null && usage.getTotalTokens() != null) ? usage.getTotalTokens() : 0;
+            log.info("[LLM] 大模型对帐 - SessionId: {}, DeviceId: {}, RequestId: {}, Model: {}, PromptTokens: {}, CompletionTokens: {}, TotalTokens: {}",
+                    getSession().getSessionId(), getSession().getDeviceIdOrUnknown(), llmRequestId, llmModel,
+                    promptTokens, completionTokens, totalTokens);
             DialogueTurn dialogueTurn = buildTurn(turn, assistant, usage, snapshot, false);
             commitTurn(turn, dialogueTurn, snapshot.chains());
             turn.completedTurn = dialogueTurn;
