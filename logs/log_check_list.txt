@@ -1,0 +1,97 @@
+========================================================================
+设备端调用问题检查清单 (log_check_list)
+用途：记录从线上日志中发现的设备端/协议时序问题，供后续检测修复状态、
+      编写 regression test 使用。每条含「现象 / 根因 / 证据 / 检测方法 /
+      期望行为 / 修复归属 / 回归判定」。
+========================================================================
+
+
+------------------------------------------------------------------------
+[ISSUE-001] 解卦 msg(guaxiang) 发送时序过晚，卦象上下文被整段丢弃
+------------------------------------------------------------------------
+发现日期   : 2026-09-24
+状态       : OPEN（未修复，根因在设备/客户端侧）
+严重级别   : 高（功能失效：解卦场景 LLM 收不到卦象提示词）
+影响范围   : 走 listen/manual + msg(卦象) 协议的解卦类设备
+             已观测: device014, device037, device018
+
+现象
+  设备发送带卦象解卦提示词的 listen/start 消息(msg 字段, 约 580 中文字)，
+  但该 msg 到达服务端的时刻晚于本轮 STT 完成 + LLM 调用发起，导致本轮
+  LLM 的 prompt 中不包含卦象上下文，卦象提示词被丢弃，回复退化为普通问答。
+
+根因（客户端发送时序错误）
+  正确时序应为：先 listen/start(带 msg) → 用户开口 → STT → handleText 拼接。
+  故障时序为  ：listen/start(不带 msg) → 用户开口 → STT → 立即触发 LLM →
+                之后才补发 listen/start(带 msg)。
+  服务端 handleText 在 STT 终稿后立即执行，此刻 session.guaxiang 仍为空，
+  DialogueService 的 `if (guaxiang != null && !guaxiang.isEmpty())` 不成立，
+  不做前缀拼接；等 msg 到达并 setGuaxiang 时，本轮 LLM 早已发出，且会话
+  随后关闭、无第二轮 STT 来消费 guaxiang，卦象永久丢失。
+
+关键代码位置（服务端，仅供定位，非缺陷点）
+  - xiaozhi-dialogue/.../communication/common/MessageHandler.java  L411-413
+      if (message.getMsg() != null && !message.getMsg().isEmpty())
+          chatSession.setGuaxiang(message.getMsg());
+  - xiaozhi-dialogue/.../dialogue/DialogueService.java  L397-401
+      String guaxiang = session.getGuaxiang();
+      if (guaxiang != null && !guaxiang.isEmpty()) { text = guaxiang + ". " + text; }
+  - STT 终稿 → handleText 调用点: DialogueService.java L336
+
+证据（logs/logs/dialogue/xiaozhi-dialogue.log, 2026-09-24）
+  故障样本 device014 / SessionId da3143ec-7b56-9e49-c7e7-225378cbb9ba:
+    L164 09:14:39.725 listen/start/manual  —— 不带 msg（guaxiang 未设置）
+    L165 09:14:44.467 listen/stop
+    L166 09:14:44.727 [STT] 语音识别对帐 Chars: 16（"我开出租车，我今天一天能挣钱吗？"）
+    L168 09:14:44.868 [LLM] 开始调用大模型 消息数:2  —— guaxiang 此时为空
+    L170 09:14:45.404 收到 listen/start + 750字 msg  —— 晚于 L168 约 0.54s
+    L171 09:14:46.600 大模型对帐 PromptTokens: 654
+    L176 09:15:14.035 WebSocket 关闭（无第二轮 STT）
+  Token 反推佐证:
+    msg 正文约 580 中文字 ≈ 400~580 tokens；若被拼入 prompt，
+    PromptTokens 应 ≈ 1000~1200+；实测仅 654（≈ 系统提示 + 那句16字问题），
+    证明该 msg 未进入本轮 LLM prompt。
+  同类故障样本:
+    device037 / b767aeee-8305-a8a9-850b-e0cc644b0da0（msg L33 晚于 LLM L32）
+    device018 / b419df6b-fbdf-7bd1-9e1a-073b41bdadab（msg 晚于 LLM 首句）
+
+  正常对照 device060 / SessionId 7b52ea2f-b9da-dfd7-2f88-b467651596f5:
+    L141 09:06:08.543 listen/start + msg（"…离为火"，不带用户问题）—— 先到
+    L143 09:06:28.188 [STT] Chars:24 —— 用户后说话
+    L145 09:06:28.220 [LLM] 开始调用（guaxiang 已就位）
+    L149 09:06:31.103 TTS "离为火 象征光明与依附…" —— 卦辞正常生成 ✓
+
+检测方法（用于扫描线上日志判断是否仍存在该问题）
+  对每条解卦会话，比较两个时间戳：
+    T_msg = 带 msg 字段的 listen/start 消息到达时刻（WebSocketHandler:80，
+            JsonNode 中含 "msg":"…卦象/解卦流程…"）
+    T_llm = 同一 SessionId 的 "[LLM] 开始调用大模型" 时刻（Persona:228）
+  判定:
+    若 T_msg > T_llm  →  故障（卦象迟到，本轮未使用）  → FAIL
+    若 T_msg < 该轮 STT 完成时刻  →  正常              → PASS
+  辅助信号:
+    - 故障轮的 PromptTokens 明显偏小（未含约 580 字卦象，通常 <800）。
+    - 故障会话在 msg 到达后无第二次 "[STT] 语音识别对帐"，随即关闭连接。
+
+期望行为（修复后应满足）
+  设备在用户开口之前（listen/start）即携带 msg 下发卦象上下文，使
+  T_msg < T_stt < T_llm；handleText 执行时 session.guaxiang 非空，
+  LLM prompt 含卦象提示词，PromptTokens 相应增大，回复为解卦卦辞。
+
+修复归属
+  设备/客户端固件侧：调整发送时序，先 listen/start(带 msg) 再采集音频。
+  （服务端拼接逻辑本身正确，无需改动；如需服务端兜底可另议，但非本条根因。）
+
+回归判定 (regression test)
+  用例：模拟解卦设备一轮完整交互。
+  步骤：
+    1) 发送 listen/start/manual，且 msg 携带卦象解卦提示词；
+    2) 推送用户问题音频（如"我今天一天能挣钱吗"）；
+    3) 发送 listen/stop 收句。
+  断言：
+    - handleText 执行时 session.getGuaxiang() 非空；
+    - 送 LLM 的 UserMessage.text 以卦象提示词为前缀（含 "…卦象…" + ". " + 用户问题）；
+    - 大模型对帐 PromptTokens 明显大于仅含系统提示+问题的基线（应含约 400~580 tokens 卦象）；
+    - 反例（当前 bug）：先发不带 msg 的 listen/start，STT 后再补发 msg，
+      应能检测到 guaxiang 在本轮 handleText 时为空 → 该场景须被修复消除。
+------------------------------------------------------------------------
