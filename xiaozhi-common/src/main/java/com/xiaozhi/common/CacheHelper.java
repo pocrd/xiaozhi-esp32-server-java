@@ -1,13 +1,13 @@
 package com.xiaozhi.common;
 
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
+
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.Resource;
-import java.util.concurrent.TimeUnit;
-import java.util.function.Supplier;
-
 import lombok.extern.slf4j.Slf4j;
 /**
  * 缓存助手类
@@ -61,7 +61,7 @@ public class CacheHelper {
                     return result;
 
                 } finally {
-                    lock.unlock();
+                    safeUnlock(lock, lockKey);
                 }
             } else {
                 // 获取锁失败,直接查询数据库(降级策略)
@@ -97,7 +97,7 @@ public class CacheHelper {
                 try {
                     return supplier.get();
                 } finally {
-                    lock.unlock();
+                    safeUnlock(lock, lockKey);
                 }
             } else {
                 log.warn("获取锁超时: {}", lockKey);
@@ -110,6 +110,26 @@ public class CacheHelper {
         } catch (Exception e) {
             log.error("执行带锁操作异常: {}", lockKey, e);
             return null;
+        }
+    }
+
+    /**
+     * 安全释放分布式锁
+     * <p>
+     * 仅在锁仍由当前线程持有时才执行 unlock,避免租约到期或 Redis 断连时
+     * 抛出 {@link IllegalMonitorStateException}。释放过程中的任何异常都只记录告警,
+     * 不向外传播,以免污染主流程(如导致重复查询数据库)。
+     *
+     * @param lock    待释放的锁
+     * @param lockKey 锁的key(用于日志)
+     */
+    private void safeUnlock(RLock lock, String lockKey) {
+        try {
+            if (lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
+        } catch (Exception e) {
+            log.warn("释放分布式锁失败(已忽略): {}", lockKey, e);
         }
     }
 }
