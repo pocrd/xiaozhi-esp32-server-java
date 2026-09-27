@@ -51,6 +51,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, date, timedelta
@@ -679,6 +680,99 @@ def estimate_cost_for_record(rec: "RemoteAuditRecord") -> Tuple[float, str, bool
     return cost, formula, known
 
 
+def _aggregate_remote_cost(remote_recs: Sequence["RemoteAuditRecord"]) -> Dict[str, Any]:
+    """按模型聚合一批云端记录的成本，返回 ``{"total": float, "by_model": {...}}``。
+
+    与 _kind_html_stats / print_reconcile_report 的 per-model 口径完全一致，
+    供「本地成本」「云端总成本」两处复用，避免逻辑分叉。
+    """
+    by_model: Dict[str, Dict[str, Any]] = defaultdict(
+        lambda: {"n": 0, "cost": 0.0, "chars": 0, "in_tok": 0, "out_tok": 0,
+                 "total_tok": 0, "sec": 0.0, "known": True, "price_kind": ""})
+    total = 0.0
+    for rr in remote_recs:
+        u = _extract_usage(rr.raw or {})
+        price, known = lookup_price(rr.model)
+        c, _ = estimate_cost(u, price)
+        m = rr.model or "unknown"
+        b = by_model[m]
+        b["n"] += 1
+        b["cost"] += c
+        b["known"] = b["known"] and known
+        b["price_kind"] = price.get("kind", "")
+        b["chars"] += u.get("characters") or 0
+        b["in_tok"] += u.get("input_tokens") or 0
+        b["out_tok"] += u.get("output_tokens") or 0
+        b["total_tok"] += u.get("total_tokens") or 0
+        b["sec"] += u.get("duration_sec") or 0.0
+        total += c
+    return {"total": total, "by_model": dict(by_model)}
+
+
+def _aggregate_session_cost(
+    reports: Sequence[Tuple[str, str, "ReconcileReport"]],
+) -> Dict[str, Dict[str, Any]]:
+    """按会话（SessionId）聚合成本（本地成本口径：matched 云端记录），返回 {session_id: {...}}。
+
+    「会话」＝一轮完整对话，由多段组件构成（一个 SessionId 对应一轮）：
+      - 语音类：stt + llm + tts（各一段或更多）
+      - 非语音类：llm + tts（各一段或更多）
+    单个会话成本 = 其所有 stt/llm/tts 段 matched 云端记录成本之和。
+    会话类型按「是否包含 STT」判定：含 STT → 语音类，否则 → 非语音类；
+    类型依据本地日志全部段（含 local_only）判定，避免 STT 未匹配时误判。
+    完整性：matched 段同时含 LLM 与 TTS（有完整一问一答响应）→ complete=True；
+    否则为残缺会话（如仅 STT 无响应、仅 TTS 无 LLM），成本极低，不应污染均值。
+
+    返回结构：{"device_ids": [...], "first_ts", "last_ts", "n"(matched 段数),
+              "total"(成本), "kinds": [...], "session_type": "语音类"|"非语音类",
+              "complete": bool, "by_kind": {kind: {"n": int, "cost": float}}}
+    复用 estimate_cost/lookup_price 单价口径；SessionId 为空归入 "(unknown)"。
+    """
+    sessions: Dict[str, Dict[str, Any]] = defaultdict(
+        lambda: {"device_ids": set(), "first_ts": None, "last_ts": None,
+                 "n": 0, "total": 0.0, "kinds": set(), "matched_kinds": set(),
+                 "by_kind": defaultdict(lambda: {"n": 0, "cost": 0.0})})
+    for kind, _, rep in reports:
+        for lr, rr in rep.matched:
+            sid = lr.session_id or "(unknown)"
+            u = _extract_usage(rr.raw or {})
+            price, _known = lookup_price(rr.model)
+            c, _ = estimate_cost(u, price)
+            s = sessions[sid]
+            if lr.device_id:
+                s["device_ids"].add(lr.device_id)
+            if lr.timestamp:
+                if s["first_ts"] is None or lr.timestamp < s["first_ts"]:
+                    s["first_ts"] = lr.timestamp
+                if s["last_ts"] is None or lr.timestamp > s["last_ts"]:
+                    s["last_ts"] = lr.timestamp
+            k = kind or lr.kind
+            s["n"] += 1
+            s["total"] += c
+            s["kinds"].add(k)
+            s["matched_kinds"].add(k)
+            kb = s["by_kind"][k]
+            kb["n"] += 1
+            kb["cost"] += c
+        # local_only：无 matched 成本，但用于正确判定会话类型（如 STT 未匹配）
+        for lr in rep.local_only:
+            sid = lr.session_id or "(unknown)"
+            sessions[sid]["kinds"].add(kind or lr.kind)
+    # 仅保留有 matched 成本的会话；set/defaultdict 转普通类型，便于 JSON/CSV 导出
+    out: Dict[str, Dict[str, Any]] = {}
+    for sid, s in sessions.items():
+        if s["n"] == 0:
+            continue
+        mk = s["matched_kinds"]
+        out[sid] = {"device_ids": sorted(s["device_ids"]), "first_ts": s["first_ts"],
+                    "last_ts": s["last_ts"], "n": s["n"], "total": s["total"],
+                    "kinds": sorted(s["kinds"]),
+                    "session_type": "语音类" if "STT" in s["kinds"] else "非语音类",
+                    "complete": ("LLM" in mk and "TTS" in mk),
+                    "by_kind": {k: dict(v) for k, v in s["by_kind"].items()}}
+    return out
+
+
 # 模型名→类型分类（与 csv_reconcile.py 口径一致）
 TTS_MODEL_PAT = re.compile(r"tts|cosyvoice|sambert|qwen-audio|qwen3-tts", re.IGNORECASE)
 STT_MODEL_PAT = re.compile(r"paraformer|asr|gummy|sensevoice|recogni", re.IGNORECASE)
@@ -956,6 +1050,19 @@ def _remote_total_tokens(r: RemoteAuditRecord) -> Optional[int]:
     return _to_int(_pick(raw, "total_tokens"))
 
 
+def _remote_chars_aligned(r: RemoteAuditRecord) -> Tuple[int, str]:
+    """返回与本地 text.length() 同口径的云端「字符数」及计费口径标签（"chars" | "token"）。
+
+    - char 计费模型（cosyvoice/sambert）：usage.characters 即真实字符数，直接与本地字符数对照；
+    - token 计费模型（qwen-audio-tts / qwen3-tts）：usage.characters 是 ≈1.9×token 的辅助计量、
+      并非输入文本长度，真实可比口径是 input_tokens（中文≈1字/token），故取 input_tokens。
+    """
+    pk = lookup_price(r.model)[0].get("kind", "")
+    if pk == "token":
+        return (_extract_usage(r.raw or {}).get("input_tokens") or 0), "token"
+    return (r.characters or 0), "chars"
+
+
 def print_reconcile_report(rep: ReconcileReport, chars_unit_price: float = 2.0,
                             mode: str = "requestId", kind: str = "",
                             use_end: bool = True) -> None:
@@ -1019,7 +1126,7 @@ def print_reconcile_report(rep: ReconcileReport, chars_unit_price: float = 2.0,
             b["sec"] += u.get("duration_sec") or 0.0
         if cost_by_model:
             total_cost = sum(v["cost"] for v in cost_by_model.values())
-            print(f"云端成本估算          : ¥{total_cost:.4f}  （按模型单价表，--chars-unit-price 已废弃）")
+            print(f"本地成本（matched 云端记录）: ¥{total_cost:.4f}  （按模型单价表，--chars-unit-price 已废弃）")
             for m, v in sorted(cost_by_model.items(), key=lambda kv: -kv[1]["cost"]):
                 tag = "" if v["known"] else "  [默认价]"
                 if v["price_kind"] == "token":
@@ -1033,10 +1140,18 @@ def print_reconcile_report(rep: ReconcileReport, chars_unit_price: float = 2.0,
                 else:
                     detail = ""
                 print(f"    {m:<28} n={v['n']:<4} {detail:<28} ¥{v['cost']:.4f}{tag}")
-        # 云端用量汇总（保留字符/tokens 展示，便于交叉校验）
-        r_chars = sum(rr.characters for _, rr in rep.matched if rr.characters is not None)
-        if r_chars:
-            print(f"云端字符总数          : {r_chars}")
+        # 云端字符用量（与本地 text.length() 同口径：char 计费取 characters，token 计费取 input_tokens）
+        _aligned = [_remote_chars_aligned(rr) for _, rr in rep.matched]
+        _basis = {b for _, b in _aligned}
+        r_chars_aligned = sum(v for v, _ in _aligned)
+        if r_chars_aligned:
+            if _basis == {"token"}:
+                print(f"云端input_tokens      : {r_chars_aligned}")
+            else:
+                print(f"云端字符总数          : {r_chars_aligned}")
+        r_chars_raw = sum(rr.characters for _, rr in rep.matched if rr.characters is not None)
+        if "token" in _basis and r_chars_raw:
+            print(f"  注：云端 usage.characters 合计 {r_chars_raw}（≈1.9×token 的辅助计量、非文本长度，不作字符对帐）")
         # LLM token 用量交叉校验
         ltok = [lr.total_tokens for lr, _ in rep.matched if lr.total_tokens is not None]
         rtok = [x for x in (_remote_total_tokens(rr) for _, rr in rep.matched) if x is not None]
@@ -1139,7 +1254,8 @@ def export_reconcile_csv(rep: ReconcileReport, path: Path,
     _export_reconcile_reports([(kind, mode, rep)], path, use_end=use_end)
 
 
-def _print_reconcile_totals(reports: Sequence[Tuple[str, str, ReconcileReport]]) -> None:
+def _print_reconcile_totals(reports: Sequence[Tuple[str, str, ReconcileReport]],
+                            meta: Optional[Dict[str, Any]] = None) -> None:
     if not reports:
         return
     print("=" * 78)
@@ -1154,7 +1270,151 @@ def _print_reconcile_totals(reports: Sequence[Tuple[str, str, ReconcileReport]])
         print(f"  [{kind:<3}] matched={m:<5} local_only={lo:<5} remote_only={ro:<5} (匹配方式={mode})")
     print("-" * 78)
     print(f"  合计  matched={tm}  local_only={tl}  remote_only={tr}")
+    if meta:
+        cl = meta.get("cost_local") or {}
+        cc = meta.get("cost_cloud") or {}
+        lc = cl.get("total", 0.0)
+        ct = cc.get("total", 0.0)
+        ln = sum(v["n"] for v in cl.get("by_model", {}).values())
+        cn = sum(v["n"] for v in cc.get("by_model", {}).values())
+        print("-" * 78)
+        print("成本对帐（同时间范围，按模型单价表估算）")
+        print(f"  本地成本（本地日志匹配到的云端记录）: ¥{lc:.4f}  (n={ln})")
+        print(f"  云端总成本（全部云端审计记录）      : ¥{ct:.4f}  (n={cn})")
+        print(f"  差额（云端有、本地未对上）          : ¥{ct - lc:.4f}")
+        _print_session_cost(meta.get("session_cost") or {})
     print("=" * 78)
+
+
+# 会话类型（按是否含 STT 区分，与 _aggregate_session_cost 一致）
+SESSION_TYPES: Tuple[str, ...] = ("语音类", "非语音类")
+
+
+def _session_cost_stats(session_cost: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """会话成本聚合统计（不出逐会话明细），供控制台/HTML/CSV 三处复用。
+
+    返回 {"total": {...}, "by_type": {会话类型: {...}}}，每项含：
+      sessions / complete / incomplete（全部/完整/残缺会话数）、records、
+      cost / complete_cost / incomplete_cost（总/完整/残缺成本）、
+      avg / median / max（单会话成本分布，仅基于完整会话，避免残缺污染）、
+      by_kind（组件成本拆分 {STT/LLM/TTS: {n, cost}}）。
+    分类维度为会话类型（语音类 stt+llm+tts / 非语音类 llm+tts），非组件类型。
+    """
+    def _dist(costs: List[float]) -> Dict[str, float]:
+        pos = sorted(c for c in costs if c > 0)
+        if not pos:
+            return {"avg": 0.0, "median": 0.0, "max": 0.0}
+        n = len(pos)
+        mid = pos[n // 2] if n % 2 else (pos[n // 2 - 1] + pos[n // 2]) / 2
+        return {"avg": sum(pos) / n, "median": mid, "max": pos[-1]}
+
+    def _agg(sessions: List[Dict[str, Any]]) -> Dict[str, Any]:
+        totals = [s["total"] for s in sessions]
+        comp = [s["total"] for s in sessions if s.get("complete")]
+        bk: Dict[str, Dict[str, Any]] = defaultdict(lambda: {"n": 0, "cost": 0.0})
+        for s in sessions:
+            for k, v in s.get("by_kind", {}).items():
+                bk[k]["n"] += v.get("n", 0)
+                bk[k]["cost"] += v.get("cost", 0.0)
+        d = _dist(comp)  # 分布仅基于完整会话，避免残缺（无响应）会话拉低均值
+        return {
+            "sessions": len(sessions), "complete": len(comp),
+            "incomplete": len(sessions) - len(comp),
+            "records": sum(s["n"] for s in sessions),
+            "cost": sum(totals), "complete_cost": sum(comp),
+            "incomplete_cost": sum(totals) - sum(comp),
+            "avg": d["avg"], "median": d["median"], "max": d["max"],
+            "by_kind": {k: dict(v) for k, v in bk.items()},
+        }
+
+    out: Dict[str, Any] = {"total": _agg(list(session_cost.values()))}
+    by_type: Dict[str, Dict[str, Any]] = {}
+    for t in SESSION_TYPES:
+        subs = [s for s in session_cost.values() if s.get("session_type") == t]
+        if subs:
+            by_type[t] = _agg(subs)
+    out["by_type"] = by_type
+    return out
+
+
+_SESSION_CSV_HEADER = [
+    "category", "sessions", "complete", "incomplete", "records",
+    "total_cost", "complete_cost", "incomplete_cost",
+    "avg_cost_complete", "median_cost_complete", "max_cost_complete",
+    "stt_cost", "llm_cost", "tts_cost",
+]
+
+
+def _session_cost_rows(stats: Dict[str, Any]) -> List[List[Any]]:
+    """会话成本统计表行（合计 + 分语音类/非语音类），供控制台打印与 CSV 导出复用。"""
+    rows: List[List[Any]] = []
+
+    def _row(label: str, v: Dict[str, Any]) -> List[Any]:
+        bk = v.get("by_kind", {})
+        return [label, v["sessions"], v["complete"], v["incomplete"], v["records"],
+                f"{v['cost']:.6f}", f"{v['complete_cost']:.6f}", f"{v['incomplete_cost']:.6f}",
+                f"{v['avg']:.6f}", f"{v['median']:.6f}", f"{v['max']:.6f}",
+                f"{bk.get('STT', {}).get('cost', 0.0):.6f}",
+                f"{bk.get('LLM', {}).get('cost', 0.0):.6f}",
+                f"{bk.get('TTS', {}).get('cost', 0.0):.6f}"]
+
+    rows.append(_row("合计", stats["total"]))
+    for t in SESSION_TYPES:
+        if t in stats["by_type"]:
+            rows.append(_row(t, stats["by_type"][t]))
+    return rows
+
+
+def _dw(s: Any) -> int:
+    """字符串终端显示宽度（东亚全角字符算 2），用于中文表格对齐。"""
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in str(s))
+
+
+def _lj(s: Any, w: int) -> str:
+    s = str(s)
+    return s + " " * max(0, w - _dw(s))
+
+
+def _rj(s: Any, w: int) -> str:
+    s = str(s)
+    return " " * max(0, w - _dw(s)) + s
+
+
+def _print_session_cost(session_cost: Dict[str, Dict[str, Any]]) -> None:
+    """控制台打印会话成本统计（聚合 + 分语音类/非语音类 + 完整/残缺 + 组件拆分）。"""
+    if not session_cost:
+        return
+    stats = _session_cost_stats(session_cost)
+    t = stats["total"]
+    print("-" * 78)
+    print("会话成本统计（本地成本口径：matched 云端记录；会话＝一轮对话 stt+llm+tts 或 llm+tts）")
+    print(f"  会话数: {t['sessions']}（完整 {t['complete']} / 残缺 {t['incomplete']}）  "
+          f"记录数: {t['records']}  总成本: ¥{t['cost']:.4f}")
+    print(f"  完整会话单轮成本 avg=¥{t['avg']:.4f} median=¥{t['median']:.4f} max=¥{t['max']:.4f}"
+          f"   （残缺＝无 LLM/TTS 响应，共 {t['incomplete']} 个 ¥{t['incomplete_cost']:.4f}，不计入均值）")
+    widths = [10, 7, 6, 6, 12, 12, 11, 11]
+    names = ["类型", "会话数", "完整", "残缺", "总成本", "完整均值", "中位数", "最大"]
+    print("    " + _lj(names[0], widths[0])
+          + "".join(_rj(n, w) for n, w in zip(names[1:], widths[1:])))
+    for r in _session_cost_rows(stats)[1:]:
+        vals = [r[0], r[1], r[2], r[3],
+                f"¥{float(r[5]):.4f}", f"¥{float(r[8]):.4f}",
+                f"¥{float(r[9]):.4f}", f"¥{float(r[10]):.4f}"]
+        print("    " + _lj(vals[0], widths[0])
+              + "".join(_rj(v, w) for v, w in zip(vals[1:], widths[1:])))
+        print(f"      └ 组件成本: STT=¥{float(r[11]):.4f}  LLM=¥{float(r[12]):.4f}  TTS=¥{float(r[13]):.4f}")
+
+
+def export_session_cost_csv(session_cost: Dict[str, Dict[str, Any]], path: Path) -> int:
+    """导出会话成本统计 CSV（合计 + 分语音类/非语音类聚合，不含逐会话明细）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = _session_cost_rows(_session_cost_stats(session_cost))
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(_SESSION_CSV_HEADER)
+        w.writerows(rows)
+    print(f"[ok] 已导出会话成本统计 CSV：{path}（{len(rows)} 行）")
+    return len(rows)
 
 
 # --------------------------------------------------------------------------- #
@@ -1467,6 +1727,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="time 匹配改用云端开始时刻对齐（默认用 start+duration 结束时刻）")
     p_rec.add_argument("--reconcile-csv", type=Path, default=None,
                        help="导出对帐明细 CSV（matched / local_only / remote_only）")
+    p_rec.add_argument("--session-csv", type=Path, default=None,
+                       help="导出会话成本统计 CSV（合计 + 分语音类/非语音类聚合，不含逐会话明细）")
     p_rec.add_argument("--chars-unit-price", type=float, default=2.0,
                        help="[已废弃] 旧版字符单价（元/万字符）；现在成本按 MODEL_PRICES 表按模型分别估算，此参数不再生效")
     p_rec.add_argument("--html", type=Path, default=None,
@@ -1516,6 +1778,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="[已废弃] 旧版字符单价（元/万字符）；现在成本按 MODEL_PRICES 表按模型分别估算，此参数不再生效")
     p_rep.add_argument("--reconcile-csv", type=Path, default=None,
                        help="同时导出对帐明细 CSV")
+    p_rep.add_argument("--session-csv", type=Path, default=None,
+                       help="同时导出会话成本统计 CSV（合计 + 分语音类/非语音类聚合）")
     # HTML 输出
     p_rep.add_argument("--html", type=Path, default=default_html,
                        help=f"HTML 报告输出路径（默认 {default_html}）")
@@ -1822,12 +2086,23 @@ def _compute_reconcile(args: argparse.Namespace):
     if remote_other:
         print(f"[info] 云端有 {len(remote_other)} 条无法归类(TTS/STT/LLM 之外)的记录，未参与匹配")
 
+    # 成本对帐：
+    #   本地成本   = 能与本地日志匹配的云端记录（matched）成本
+    #   云端总成本 = 对帐时间范围内全部云端审计记录（含 remote_only / 未归类）成本
+    matched_remote = [rr for _, _, rep in reports for _, rr in rep.matched]
+    cost_local = _aggregate_remote_cost(matched_remote)
+    cost_cloud = _aggregate_remote_cost(remote)
+    # 会话成本：按 SessionId 聚合 matched 云端记录（本地成本口径），含分语音类/非语音类
+    session_cost = _aggregate_session_cost(reports)
+
     meta: Dict[str, Any] = {
         "match_by": match_by, "use_end": use_end, "tolerance": tolerance,
         "days_needed": days_needed, "cached_complete": cached_complete,
         "cached_partial": cached_partial, "covered": covered, "today": today,
         "missing": missing, "stale_partial": stale_partial, "fresh_partial": fresh_partial,
         "remote_total": len(remote), "local_total": len(records), "file_count": len(files),
+        "cost_local": cost_local, "cost_cloud": cost_cloud,
+        "session_cost": session_cost,
     }
     return records, files, remote, reports, remote_other, meta
 
@@ -1870,9 +2145,11 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
     for kind, mode, rep in reports:
         print_reconcile_report(rep, chars_unit_price=args.chars_unit_price,
                                 mode=mode, kind=kind, use_end=meta["use_end"])
-    _print_reconcile_totals(reports)
+    _print_reconcile_totals(reports, meta)
     if args.reconcile_csv:
         _export_reconcile_reports(reports, args.reconcile_csv, use_end=meta["use_end"])
+    if getattr(args, "session_csv", None):
+        export_session_cost_csv(meta.get("session_cost") or {}, args.session_csv)
     if getattr(args, "html", None):
         export_reconcile_html(reports, args.html, records=records,
                               remote_other=remote_other, meta=meta,
@@ -1912,6 +2189,12 @@ def _kind_html_stats(rep: ReconcileReport, mode: str, use_end: bool,
     remote_total = matched + len(rep.remote_only)
     local_chars = sum(lr.chars for lr, _ in rep.matched if lr.chars is not None)
     remote_chars = sum(rr.characters for _, rr in rep.matched if rr.characters is not None)
+    # 「字符数 本地/云端」需同口径对比：token 计费 TTS（qwen-audio-tts 等）的云端 characters 是
+    # ≈1.9×token 的辅助计量、并非文本长度，改与 input_tokens 对照；char 计费模型仍用 characters。
+    _aligned = [_remote_chars_aligned(rr) for _, rr in rep.matched]
+    remote_chars_aligned = sum(v for v, _ in _aligned)
+    _basis = {b for _, b in _aligned}
+    chars_basis = "mixed" if len(_basis) > 1 else (next(iter(_basis)) if _basis else "chars")
     local_tokens = sum(lr.total_tokens for lr, _ in rep.matched if lr.total_tokens is not None)
     rtoks = [x for x in (_remote_total_tokens(rr) for _, rr in rep.matched) if x is not None]
     remote_tokens = sum(rtoks)
@@ -1943,6 +2226,7 @@ def _kind_html_stats(rep: ReconcileReport, mode: str, use_end: bool,
         "match_rate": (matched / local_total * 100.0) if local_total else 0.0,
         "residual": _residual_stats(rep, mode, use_end),
         "local_chars": local_chars, "remote_chars": remote_chars,
+        "remote_chars_aligned": remote_chars_aligned, "chars_basis": chars_basis,
         "remote_sec": remote_sec,
         "cost": total_cost,
         "cost_by_model": dict(by_model),
@@ -2078,6 +2362,96 @@ def export_reconcile_html(reports: Sequence[Tuple[str, str, ReconcileReport]], p
                  f"<td class='num'>{overall_rate:.1f}%</td></tr>")
     H.append("</tbody></table>")
 
+    # 成本对帐：本地成本（matched）vs 云端总成本（全部云端记录）
+    _cl = meta.get("cost_local") or {}
+    _cc = meta.get("cost_cloud") or {}
+    _local_cost = _cl.get("total", 0.0)
+    _cloud_cost = _cc.get("total", 0.0)
+    _diff_cost = _cloud_cost - _local_cost
+    _lbm = _cl.get("by_model", {})
+    _cbm = _cc.get("by_model", {})
+    _ln = sum(v["n"] for v in _lbm.values())
+    _cn = sum(v["n"] for v in _cbm.values())
+    H.append("<h2 class='sec'>成本对帐（同时间范围，按模型单价表估算）</h2>")
+    H.append("<div class='cards'>")
+    H.append(f"<div class='card'><div class='k'>本地成本（本地日志匹配到的云端记录）</div>"
+             f"<div class='v ok'>￥{_local_cost:.4f}</div><div class='k'>n={_ln}</div></div>")
+    H.append(f"<div class='card'><div class='k'>云端总成本（全部云端审计记录）</div>"
+             f"<div class='v'>￥{_cloud_cost:.4f}</div><div class='k'>n={_cn}</div></div>")
+    H.append(f"<div class='card'><div class='k'>差额（云端有、本地未对上）</div>"
+             f"<div class='v warn'>￥{_diff_cost:.4f}</div></div>")
+    H.append("</div>")
+    H.append("<table><thead><tr><th>模型</th><th class='num'>本地 n</th><th class='num'>本地成本</th>"
+             "<th class='num'>云端 n</th><th class='num'>云端总成本</th><th class='num'>差额</th></tr></thead><tbody>")
+    for _m in sorted(set(_lbm) | set(_cbm), key=lambda k: -_cbm.get(k, {}).get("cost", 0.0)):
+        _lv = _lbm.get(_m, {})
+        _cv = _cbm.get(_m, {})
+        _lc = _lv.get("cost", 0.0)
+        _cc2 = _cv.get("cost", 0.0)
+        _tag = "" if _cv.get("known", True) else " <span style='color:#d97706'>[默认价]</span>"
+        H.append(f"<tr><td>{_esc(_m)}{_tag}</td><td class='num'>{_lv.get('n', 0)}</td>"
+                 f"<td class='num'>￥{_lc:.4f}</td><td class='num'>{_cv.get('n', 0)}</td>"
+                 f"<td class='num'>￥{_cc2:.4f}</td><td class='num'>￥{_cc2 - _lc:.4f}</td></tr>")
+    H.append(f"<tr class='total'><td>合计</td><td class='num'>{_ln}</td><td class='num'>￥{_local_cost:.4f}</td>"
+             f"<td class='num'>{_cn}</td><td class='num'>￥{_cloud_cost:.4f}</td>"
+             f"<td class='num'>￥{_diff_cost:.4f}</td></tr>")
+    H.append("</tbody></table>")
+    H.append("<div class='note'>本地成本＝能与本地日志匹配的云端记录成本；云端总成本＝对帐时间范围内全部云端审计记录成本"
+             "（含 remote_only 与未归类记录）。差额为本地日志未覆盖的云端花费。两者均为同一时间范围（本地日志覆盖的天）。</div>")
+
+    # 会话成本统计（本地成本口径：聚合 + 分语音类/非语音类 + 完整/残缺 + 组件拆分）
+    session_cost: Dict[str, Dict[str, Any]] = meta.get("session_cost") or {}
+    if session_cost:
+        _sc = _session_cost_stats(session_cost)
+        _st = _sc["total"]
+
+        def _bk_cost(v: Dict[str, Any], k: str) -> float:
+            return v.get("by_kind", {}).get(k, {}).get("cost", 0.0)
+
+        def _srow(label: str, v: Dict[str, Any], cls: str = "") -> str:
+            head = f"<tr class='{cls}'>" if cls else "<tr>"
+            return (head + f"<td>{label}</td>"
+                    f"<td class='num'>{v['sessions']}</td>"
+                    f"<td class='num'>{v['complete']}</td>"
+                    f"<td class='num'>{v['incomplete']}</td>"
+                    f"<td class='num'>{v['records']}</td>"
+                    f"<td class='num'>￥{v['cost']:.4f}</td>"
+                    f"<td class='num'>￥{v['avg']:.4f}</td>"
+                    f"<td class='num'>￥{v['median']:.4f}</td>"
+                    f"<td class='num'>￥{v['max']:.4f}</td>"
+                    f"<td class='num'>￥{_bk_cost(v, 'STT'):.4f}</td>"
+                    f"<td class='num'>￥{_bk_cost(v, 'LLM'):.4f}</td>"
+                    f"<td class='num'>￥{_bk_cost(v, 'TTS'):.4f}</td></tr>")
+
+        H.append("<h2 class='sec'>会话成本统计（本地成本口径，按 SessionId 聚合）</h2>")
+        H.append("<div class='cards'>")
+        H.append(f"<div class='card'><div class='k'>会话数（轮）</div><div class='v'>{_st['sessions']}</div>"
+                 f"<div class='k'>完整 {_st['complete']} / 残缺 {_st['incomplete']}</div></div>")
+        H.append(f"<div class='card'><div class='k'>会话总成本</div><div class='v ok'>￥{_st['cost']:.4f}</div>"
+                 f"<div class='k'>完整单轮均值 ￥{_st['avg']:.4f}</div></div>")
+        for _t in SESSION_TYPES:
+            _tv = _sc["by_type"].get(_t)
+            if _tv:
+                H.append(f"<div class='card'><div class='k'>{_t}会话成本</div>"
+                         f"<div class='v'>￥{_tv['cost']:.4f}</div>"
+                         f"<div class='k'>会话数={_tv['sessions']}（完整{_tv['complete']}/残缺{_tv['incomplete']}）</div></div>")
+        H.append("</div>")
+        H.append("<table><thead><tr><th>会话类型</th><th class='num'>会话数</th>"
+                 "<th class='num'>完整</th><th class='num'>残缺</th><th class='num'>记录数</th>"
+                 "<th class='num'>总成本</th><th class='num'>完整均值</th><th class='num'>中位数</th>"
+                 "<th class='num'>最大</th><th class='num'>STT</th><th class='num'>LLM</th>"
+                 "<th class='num'>TTS</th></tr></thead><tbody>")
+        H.append(_srow("合计", _st, "total"))
+        for _t in SESSION_TYPES:
+            _tv = _sc["by_type"].get(_t)
+            if _tv:
+                H.append(_srow(f"<b>{_t}</b>", _tv))
+        H.append("</tbody></table>")
+        H.append("<div class='note'>会话＝一轮完整对话：<b>语音类</b>＝stt+llm+tts，<b>非语音类</b>＝llm+tts；按是否含 STT 区分。"
+                 "<b>完整</b>＝matched 段含 LLM+TTS（有一问一答响应）；<b>残缺</b>＝无响应（如仅 STT 被打断、仅 TTS），成本极低。"
+                 "单个会话成本＝其 stt/llm/tts 段 matched 云端记录成本之和（与「本地成本」同口径）；STT/LLM/TTS 列为该类型全部会话的组件成本拆分。"
+                 "均值/中位数/最大值<b>仅基于完整会话</b>，避免残缺会话拉低。SessionId 为空归入 (unknown)。</div>")
+
     # 本地用量汇总
     by_kind: Dict[str, List[TtsRecord]] = defaultdict(list)
     for r in records:
@@ -2128,22 +2502,28 @@ def export_reconcile_html(reports: Sequence[Tuple[str, str, ReconcileReport]], p
                      f"<div class='v' style='font-size:14px'>{res['avg']:.3f} / {res['p50']:.3f} / "
                      f"{res['p95']:.3f} / {res['max']:.3f}</div></div>")
         if st["has_chars"]:
-            H.append(f"<div class='stat'><div class='k'>字符数 本地/云端</div>"
-                     f"<div class='v' style='font-size:16px'>{st['local_chars']} / {st['remote_chars']}</div></div>")
+            if st["chars_basis"] == "token":
+                clbl = "本地字符 / 云端input_tokens"
+            elif st["chars_basis"] == "mixed":
+                clbl = "字符数 本地/云端(同口径)"
+            else:
+                clbl = "字符数 本地/云端"
+            H.append(f"<div class='stat'><div class='k'>{clbl}</div>"
+                     f"<div class='v' style='font-size:16px'>{st['local_chars']} / {st['remote_chars_aligned']}</div></div>")
         if st["has_seconds"]:
             H.append(f"<div class='stat'><div class='k'>云端语音时长</div>"
                      f"<div class='v' style='font-size:16px'>{st['remote_sec']:.0f} s</div></div>")
         if st["has_tokens"]:
             H.append(f"<div class='stat'><div class='k'>total_tokens 本地/云端</div>"
                      f"<div class='v' style='font-size:16px'>{st['local_tokens']} / {st['remote_tokens']}</div></div>")
-        # 云端成本（按模型单价表估算，不混用单位）
+        # 本地成本（按模型单价表估算，仅 matched 云端记录，不混用单位）
         if st["cost"] > 0 or st["cost_by_model"]:
-            H.append(f"<div class='stat'><div class='k'>云端成本估算（按模型单价）</div>"
+            H.append(f"<div class='stat'><div class='k'>本地成本（matched 云端记录）</div>"
                      f"<div class='v' style='font-size:16px'>￥{st['cost']:.4f}</div></div>")
         H.append("</div>")
         # 按模型拆分成本明细
         if st["cost_by_model"]:
-            H.append("<div class='note' style='margin-top:6px'><b>成本明细（按模型）</b>：")
+            H.append("<div class='note' style='margin-top:6px'><b>本地成本明细（按模型）</b>：")
             parts = []
             for m, v in sorted(st["cost_by_model"].items(), key=lambda kv: -kv[1]["cost"]):
                 pk = v["price_kind"]
@@ -2167,6 +2547,10 @@ def export_reconcile_html(reports: Sequence[Tuple[str, str, ReconcileReport]], p
         if st["model_dist"]:
             mdist = "，".join(f"{_esc(str(k))}×{v}" for k, v in st["model_dist"].most_common())
             H.append(f"<div class='note'>云端模型分布：{mdist}</div>")
+        if st["has_chars"] and st["chars_basis"] in ("token", "mixed"):
+            H.append(f"<div class='note'>字符对帐口径：token 计费 TTS（如 qwen-audio-tts）本地 text.length() ≈ "
+                     f"云端 input_tokens（中文≈1字/token），二者可直接对照；云端 usage.characters（合计 "
+                     f"{st['remote_chars']}）为 ≈1.9×token 的辅助计量、非文本长度，不参与字符对帐。</div>")
         rows = _reconcile_csv_rows(rep, kind, mode, use_end)
         total_rows = len(rows)
         trunc = "" if total_rows <= detail_row_limit else f"，仅显示前 {detail_row_limit} 行"
@@ -2236,7 +2620,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     for kind, mode, rep in reports:
         print_reconcile_report(rep, chars_unit_price=args.chars_unit_price,
                                 mode=mode, kind=kind, use_end=meta["use_end"])
-    _print_reconcile_totals(reports)
+    _print_reconcile_totals(reports, meta)
 
     # ③ 导出 HTML（可选同时导出明细 CSV）
     print("\n" + "=" * 78)
@@ -2248,6 +2632,8 @@ def cmd_report(args: argparse.Namespace) -> int:
                           chars_unit_price=args.chars_unit_price)
     if getattr(args, "reconcile_csv", None):
         _export_reconcile_reports(reports, args.reconcile_csv, use_end=meta["use_end"])
+    if getattr(args, "session_csv", None):
+        export_session_cost_csv(meta.get("session_cost") or {}, args.session_csv)
     if not getattr(args, "no_open", False):
         try:
             import webbrowser

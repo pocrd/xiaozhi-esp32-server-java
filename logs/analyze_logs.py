@@ -11,7 +11,7 @@ import sys
 import glob
 import json
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict
 from typing import List, Dict, Optional
 import statistics
@@ -334,6 +334,7 @@ def prepare_summary(entries: List[LogEntry], server_sessions: List[Dict]) -> Dic
             feature_counts[e.feature] += 1
     total_bytes = sum(e.bytes_count for e in entries)
     concurrency = compute_concurrency_stats(server_sessions)
+    activity = compute_active_devices(entries, server_sessions)
     return {
         'total_records': len(entries),
         'date_range': f"{dates[0]} ~ {dates[-1]}" if dates else "",
@@ -345,6 +346,7 @@ def prepare_summary(entries: List[LogEntry], server_sessions: List[Dict]) -> Dic
         'feature_counts': dict(feature_counts),
         'total_bytes_mb': round(total_bytes / 1024 / 1024, 2),
         'concurrency': concurrency,
+        'activity': activity,
     }
 
 
@@ -409,6 +411,79 @@ def compute_concurrency_stats(server_sessions: List[Dict]) -> Dict:
         'peak_time': peak_time,
         'hourly': hourly,
         'timeline': timeline,
+    }
+
+
+# ─── 设备活跃度统计（多时间窗口 DAU/WAU/MAU 风格）────────────────────────────
+
+# 活跃度时间窗口定义：(key, label, kind, param)
+#   kind='hours': 滚动窗口 [anchor - param 小时, anchor]
+#   kind='days' : 自然日窗口，含 anchor 当天在内共 param 个自然日
+#   kind='month': anchor 所在自然月 [当月 1 号 00:00, anchor]
+ACTIVITY_WINDOWS = [
+    ('h24',   '24小时内',    'hours', 24),
+    ('h72',   '72小时内',    'hours', 72),
+    ('d5',    '5个自然日内',  'days',  5),
+    ('d7',    '7个自然日内',  'days',  7),
+    ('d14',   '14个自然日内', 'days',  14),
+    ('month', '月度活跃',    'month', None),
+]
+
+
+def compute_active_devices(entries: List[LogEntry],
+                           server_sessions: List[Dict]) -> Dict:
+    """多时间窗口活跃设备数统计。
+
+    活跃设备 = 窗口内至少有一条活动记录的唯一 DeviceId；活动记录来源为设备端日志
+    条目（device-log）与服务端 WebSocket 连接（xiaozhi-dialogue）二者的并集。
+    时间锚点 anchor = 全部活动记录中的最新时间戳（不依赖脚本运行时刻，保证报告可复现）。
+    窗口口径：
+      - 24/72小时内：滚动窗口 [anchor - N 小时, anchor]
+      - N个自然日内：含 anchor 当天在内共 N 个自然日 [anchor_date-(N-1) 的 00:00, anchor]
+      - 月度活跃：anchor 所在自然月 [当月 1 号 00:00, anchor]
+    """
+    dev_ts: Dict[str, List[int]] = defaultdict(list)
+    for e in entries:
+        ms = _parse_ts_ms(e.timestamp)
+        if ms is not None:
+            dev_ts[e.device_id].append(ms)
+    for ss in server_sessions:
+        if ss.get('start_ts_ms') is not None:
+            dev_ts[ss['device_id']].append(ss['start_ts_ms'])
+
+    if not dev_ts:
+        return {'anchor': '', 'anchor_ms': 0, 'total_devices': 0, 'windows': []}
+
+    anchor_ms = max(max(v) for v in dev_ts.values())
+    anchor_dt = datetime.fromtimestamp(anchor_ms / 1000)
+    anchor_date = anchor_dt.date()
+    total_devices = len(dev_ts)
+
+    def _day_start_ms(d) -> int:
+        return int(datetime(d.year, d.month, d.day).timestamp() * 1000)
+
+    windows = []
+    for key, label, kind, param in ACTIVITY_WINDOWS:
+        if kind == 'hours':
+            start_ms = anchor_ms - param * 3600 * 1000
+        elif kind == 'days':
+            start_ms = _day_start_ms(anchor_date - timedelta(days=param - 1))
+        else:  # month
+            start_ms = _day_start_ms(anchor_date.replace(day=1))
+        active = sum(1 for tss in dev_ts.values()
+                     if any(start_ms <= t <= anchor_ms for t in tss))
+        start_label = datetime.fromtimestamp(start_ms / 1000).strftime('%Y-%m-%d %H:%M')
+        windows.append({
+            'key': key, 'label': label, 'active': active, 'total': total_devices,
+            'pct': round(active / total_devices * 100, 1) if total_devices else 0,
+            'range': f"{start_label} ~ {anchor_dt.strftime('%Y-%m-%d %H:%M')}",
+        })
+
+    return {
+        'anchor': anchor_dt.strftime('%Y-%m-%d %H:%M:%S'),
+        'anchor_ms': anchor_ms,
+        'total_devices': total_devices,
+        'windows': windows,
     }
 
 
@@ -1053,6 +1128,7 @@ tr:hover{background:#e0e7ff!important}
 <div class="container">
   <div class="cards" id="summary-cards"></div>
   <div class="insights" id="insights-section"></div>
+  <div class="chart-card" id="activity-section" style="margin-bottom:1.5rem"></div>
   <div class="filter-bar">
     <div class="filter-group">
       <label>日期范围</label>
@@ -1128,7 +1204,25 @@ let charts = {};
 let FS = [...SESSIONS]; // filtered sessions
 
 // ── 初始化 ──
-function init() { renderSummaryCards(); renderInsights(); initFilters(); applyFilters(); renderCrossAnalysis(); }
+function init() { renderSummaryCards(); renderInsights(); renderActivity(); initFilters(); applyFilters(); renderCrossAnalysis(); }
+
+function renderActivity() {
+  const el = document.getElementById('activity-section');
+  const a = SUMMARY.activity;
+  if (!a || !a.windows || !a.windows.length) { el.style.display = 'none'; return; }
+  const cards = a.windows.map(w =>
+    `<div class="card" style="padding:.75rem"><div class="label">${w.label}</div>`+
+    `<div class="value" style="font-size:1.5rem">${w.active}</div>`+
+    `<div class="sub">占全部 ${w.total} 台的 ${w.pct}%</div></div>`).join('');
+  const rows = a.windows.map(w =>
+    `<tr><td><b>${w.label}</b></td><td class="dir-down">${w.active}</td><td>${w.total}</td>`+
+    `<td>${w.pct}%</td><td style="font-size:.75rem;color:#64748b">${w.range}</td></tr>`).join('');
+  el.innerHTML =
+    `<h3 style="font-size:.95rem;font-weight:600;margin-bottom:.5rem">🔥 设备活跃度（多时间窗口 · 活跃设备数）</h3>`+
+    `<p style="font-size:.78rem;color:#64748b;margin-bottom:.75rem">时间锚点＝最新活动时间 <b>${a.anchor}</b>；活跃设备＝窗口内至少一次活动（设备日志或 WebSocket 连接）的唯一设备；全部设备 <b>${a.total_devices}</b> 台。24/72小时为滚动窗口，N个自然日含当天，月度为自然月。</p>`+
+    `<div class="cards" style="margin-bottom:1rem">${cards}</div>`+
+    `<div class="table-wrap"><table><thead><tr><th>时间窗口</th><th>活跃设备数</th><th>全部设备</th><th>活跃占比</th><th>窗口范围</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
 
 function renderCrossAnalysis() {
   renderLatencyBreakdown(); renderCloseReason(); renderInputMode();
@@ -1750,7 +1844,7 @@ document.addEventListener('DOMContentLoaded', init);
 
 # ─── 报告生成 ────────────────────────────────────────────────────────────────
 
-def generate_html_report(entries: List[LogEntry], log_dir: str, output_path: str):
+def generate_html_report(entries: List[LogEntry], log_dir: str, output_path: str, base_dir: str = None):
     """生成交互式 HTML 报告"""
     server_sessions = parse_server_logs(log_dir)
     summary = prepare_summary(entries, server_sessions)
@@ -1816,11 +1910,14 @@ def parse_args():
   python analyze_logs.py                  # 使用脚本所在目录作为日志根目录
   python analyze_logs.py --log-dir /path  # 指定日志根目录
   python analyze_logs.py -o report.html   # 指定输出文件
+  python analyze_logs.py --no-open        # 生成后不自动打开浏览器
 """)
     parser.add_argument('--log-dir', '-d', default=None,
                         help='日志根目录 (默认: 脚本所在目录)')
     parser.add_argument('--output', '-o', default=None,
                         help='输出 HTML 文件路径 (默认: <log-dir>/dashboard.html)')
+    parser.add_argument('--no-open', action='store_true',
+                        help='生成后不自动用浏览器打开报告')
     return parser.parse_args()
 
 
@@ -1865,12 +1962,22 @@ def main():
     output_path = os.path.abspath(output_path)
 
     print(f"\n正在生成交互式 HTML 报告...")
-    generate_html_report(entries, dialogue_dir, output_path)
+    generate_html_report(entries, dialogue_dir, output_path, base_dir)
     print(f"\n{'=' * 60}")
     print(f"✅ 报告已生成: {output_path}")
     print(f"   请在浏览器中打开该文件查看交互式仪表盘。")
     print(f"   支持: 日期范围筛选 | 图表交互 | 表格排序")
     print(f"{'=' * 60}")
+
+    # 生成后 best-effort 用默认浏览器打开（--no-open 可关闭；无图形环境/无浏览器时静默忽略）
+    if not args.no_open:
+        try:
+            import webbrowser
+            from pathlib import Path
+            if webbrowser.open(Path(output_path).resolve().as_uri()):
+                print("[ok] 已在默认浏览器打开报告")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 if __name__ == '__main__':
