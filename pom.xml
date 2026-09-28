@@ -53,7 +53,7 @@
         <onnxruntime.version>1.23.2</onnxruntime.version>
         <tencent-speech.version>1.0.53</tencent-speech.version>
         <aliyun-nls.version>2.2.18</aliyun-nls.version>
-        <dashscope.version>2.22.7</dashscope.version>
+        <dashscope.version>2.22.32</dashscope.version>
         <aliyun-core.version>3.7.1</aliyun-core.version>
         <aliyun-sms.version>2.0.24</aliyun-sms.version>
         <xfyun.version>3.0.2</xfyun.version>

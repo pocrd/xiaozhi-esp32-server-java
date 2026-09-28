@@ -8,7 +8,9 @@ import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -39,6 +41,50 @@ public class AliyunTtsService implements TtsService {
     private static final int MAX_RETRY_ATTEMPTS = 3;
     private static final long RETRY_DELAY_MS = 1000;
     private static final long TTS_TIMEOUT_SECONDS = 21;
+
+    /**
+     * 多音字/易错词注音字典：key 为待注音的字或词，value 为带声调数字的拼音（如 qian2 = qián）。
+     * 通过 qwen-audio-3.1 系列的 hot_fix.pronunciation 生效，避免多音字被读错（如「乾」默认可能读 gān）。
+     * 直接在此维护即可，规模变大也不影响单次请求——见 {@link #buildHotFix(String)} 的按句过滤。
+     */
+    private static final Map<String, String> PRONUNCIATION_DICT = Map.of(
+            "乾", "qian2"
+    );
+
+    /**
+     * hot_fix 仅部分模型支持（qwen-audio-3.0 系列、cosyvoice-v2/v1 不支持），向不支持的模型传参可能报错，
+     * 因此按模型名判断是否下发。
+     */
+    private static boolean supportsHotFix(String modelName) {
+        return modelName != null && modelName.startsWith("qwen-audio-3.1");
+    }
+
+    /**
+     * 按当前待合成文本裁剪注音字典，只保留 key 真正出现在这句话里的规则，
+     * 拼成一个仅含命中项的 hot_fix。这样字典即使有几百条，单次请求也只下发命中的少数几条，
+     * payload 恒定小。没有任何命中时返回 null，调用方据此跳过下发。
+     *
+     * @param text 本次待合成的句子文本
+     * @return 仅含命中规则的 hot_fix；无命中返回 null
+     */
+    private static com.alibaba.dashscope.audio.ttsv2.ParamHotFix buildHotFix(String text) {
+        if (text == null || text.isEmpty()) {
+            return null;
+        }
+        List<com.alibaba.dashscope.audio.ttsv2.ParamHotFix.PronunciationItem> items = new ArrayList<>();
+        for (Map.Entry<String, String> entry : PRONUNCIATION_DICT.entrySet()) {
+            if (text.contains(entry.getKey())) {
+                items.add(new com.alibaba.dashscope.audio.ttsv2.ParamHotFix.PronunciationItem(
+                        entry.getKey(), entry.getValue()));
+            }
+        }
+        if (items.isEmpty()) {
+            return null;
+        }
+        com.alibaba.dashscope.audio.ttsv2.ParamHotFix hotFix = new com.alibaba.dashscope.audio.ttsv2.ParamHotFix();
+        hotFix.setPronunciation(items);
+        return hotFix;
+    }
 
     private static final ExecutorService sharedExecutor = new ThreadPoolExecutor(
             0, 20, 60L, TimeUnit.SECONDS,
@@ -378,10 +424,12 @@ public class AliyunTtsService implements TtsService {
         String[] parsed = parseCosyVoiceParam(getVoiceName());
         String modelName = parsed[0];
         String actualVoiceName = parsed[1];
+        // 多音字注音：仅对支持 hot_fix 的模型、且当前句子命中字典时下发（无命中为 null）
+        com.alibaba.dashscope.audio.ttsv2.ParamHotFix hotFix =
+                supportsHotFix(modelName) ? buildHotFix(text) : null;
         while (attempts < MAX_RETRY_ATTEMPTS) {
             try {
-                com.alibaba.dashscope.audio.ttsv2.SpeechSynthesisParam param =
-                com.alibaba.dashscope.audio.ttsv2.SpeechSynthesisParam.builder()
+                var paramBuilder = com.alibaba.dashscope.audio.ttsv2.SpeechSynthesisParam.builder()
                                 .apiKey(apiKey)
                                 .model(modelName)  // 使用解析出的模型名
                                 .voice(actualVoiceName)  // 使用解析出的音色名
@@ -389,8 +437,11 @@ public class AliyunTtsService implements TtsService {
                                 .pitchRate(getPitch().floatValue())
                                 .volume(100)
                                 .languageHints(Arrays.asList("zh"))
-                                .format(com.alibaba.dashscope.audio.ttsv2.SpeechSynthesisAudioFormat.WAV_16000HZ_MONO_16BIT)
-                                .build();
+                                .format(com.alibaba.dashscope.audio.ttsv2.SpeechSynthesisAudioFormat.WAV_16000HZ_MONO_16BIT);
+                if (hotFix != null) {
+                    paramBuilder.hotFix(hotFix);
+                }
+                com.alibaba.dashscope.audio.ttsv2.SpeechSynthesisParam param = paramBuilder.build();
 
                 // 使用共享线程池
                 AtomicReference<String> requestIdRef = new AtomicReference<>();
