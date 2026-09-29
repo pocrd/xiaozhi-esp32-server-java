@@ -298,8 +298,16 @@ public class DialogueService{
                 // 本轮已被新一轮或 abort 取代，结果作废，否则过期文本会触发一轮多余对话；
                 // 暂停的播放仍由本轮终稿决定去留
                 if (session.getAudioSinks() != turnSink) {
+                    String droppedText = sttResult != null ? sttResult.text() : null;
+                    // 本分支是 STT 出终稿后唯一无日志的丢弃出口：音频流为 null 表示已被 abort/close 关闭，
+                    // 非 null 表示已被新一轮 startStt 替换。解卦场景设备连发 listen/start(卦象)→stop 时，
+                    // 上一轮在途 STT 会命中此处被静默丢弃，缺日志时「STT 已识别却未调用 LLM」无从定位，故补上。
+                    log.info("[STT] 本轮已被取代，丢弃识别结果 - SessionId: {}, DeviceId: {}, 音频流: {}, bargeIn: {}, Chars: {}, text: {}",
+                            session.getSessionId(), session.getDeviceIdOrUnknown(),
+                            session.getAudioSinks() == null ? "已关闭" : "被新一轮替换",
+                            bargeIn.get(), droppedText != null ? droppedText.length() : 0, droppedText);
                     if (bargeIn.get()) {
-                        resolveBargeIn(session, persona, sttResult != null ? sttResult.text() : null);
+                        resolveBargeIn(session, persona, droppedText);
                     }
                     return;
                 }
