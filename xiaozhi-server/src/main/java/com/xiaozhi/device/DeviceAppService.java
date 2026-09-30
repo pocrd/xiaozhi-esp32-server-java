@@ -314,7 +314,7 @@ public class DeviceAppService {
         Map<String, Object> otaResponse = new HashMap<>();
 
         // --- 固件信息：按硬件类型匹配 ---
-        String hType = req.getHType();
+        String hType = null; //req.getHType();
         if (!StringUtils.hasText(hType)) {
             // 固件未上报 hardwareType 时，根据 deviceId 判定
             String normalizedId = deviceId.toLowerCase();
