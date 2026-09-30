@@ -158,7 +158,7 @@
 [ISSUE-003] 1006 异常断流高度集中于少数设备，且基本无服务端异常
 ------------------------------------------------------------------------
 发现日期   : 2026-09-30
-状态       : OPEN（根因已定位：客户端侧网络断连 Broken pipe，服务端无 bug）
+状态       : OPEN（根因客户端侧网络断连 Broken pipe，服务端无 bug；服务端误报已修 2026-09-30）
 严重级别   : 中（打断真实会话、伤体验；但集中于少数设备、非全局，且非服务端故障）
 影响范围   : 680 个 WS 会话中 87 个以 1006 异常断流（占 12.8%）；
              top3 设备 device1317(24)、device143(14)、device1265(6) 合计 44/87 ≈ 51%。
@@ -187,6 +187,8 @@
   analyze_users.py::parse_error_log 按 SessionId 关联 close_code==1006 会话与 dialogue-error
   的「WebSocket传输错误」；quality['broken_1006']（含 reason_dist/top_devices）。
   RE_WS_CLOSE 已扩展捕获 close_reason，Broken pipe/Connection reset 即客户端侧断连铁证。
+  服务端误报锚点：grep「WebSocket传输错误」dialogue-error.log 修复后应仅剩真·传输错误，
+    不再含 java.net.SocketException: Connection reset（该客户端断连已由 afterConnectionClosed 的 INFO 关闭日志承载）。
 
 期望行为
   1006 断流率下降且不再集中于个别设备/个别日期；服务端对 Broken pipe 降级为正常回收
@@ -195,11 +197,19 @@
 修复归属
   设备/固件/网络侧（首要）：排查 device1317/device143 等高集中设备的 WiFi 信号/供电/休眠策略，
   增强断线自动重连与会话恢复体验。
-  服务端（次要）：将 Broken pipe 类 1006 视为客户端正常离开，降低日志级别、不计入服务异常。
+  服务端（次要）[已完成 2026-09-30]：核查发现 Broken pipe/Connection reset 类 1006 断连「本就」
+    打在 INFO（WebSocketHandler.afterConnectionClosed L134 的 CloseStatus[code=1006,reason=…]），发送路径
+    error 实测 0 次触发（MessageSender 发送前查 isOpen()，断连会话直接 return，不往坏 socket 写），
+    isClientCloseRequest 也已抑制 handleTransportError 的 error——即原设想的「降级减噪」大部分已满足。
+    唯一真实缺口：isClientCloseRequest 只匹配 "Connection reset by peer"，漏掉 JDK SocketChannelImpl
+    抛 ECONNRESET 的实际文案 "Connection reset"，致 2 起纯客户端断连被误报为 ERROR「WebSocket传输错误」，
+    污染 dialogue-error.log 并被 analyze_users 计入 with_server_error。已将匹配放宽为 "Connection reset"
+    （覆盖两种文案）消除误报；ECONNRESET 必为对端发 RST，归类为正常离开无风险。
 
 回归判定
   broken_1006.total 及 top_devices 集中度下降；reason_dist 中 Broken pipe 占比下降；
-  no_server_trace 维持高位则持续佐证客户端侧断连（服务端无 bug）。
+  no_server_trace 维持高位则持续佐证客户端侧断连（服务端无 bug）；
+  dialogue-error.log 中「WebSocket传输错误」不再包含 Connection reset（客户端断连误报已消除）。
 ------------------------------------------------------------------------
 
 

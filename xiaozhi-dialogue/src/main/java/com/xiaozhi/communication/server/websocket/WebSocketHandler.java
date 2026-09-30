@@ -164,7 +164,10 @@ public class WebSocketHandler extends AbstractWebSocketHandler {
             }
             String message = exception.getMessage();
             if (message != null) {
-                return message.contains("Connection reset by peer") ||
+                // 用 "Connection reset"（不带 "by peer"）匹配：JDK SocketChannelImpl 抛 ECONNRESET 的实际
+                // 文案就是 "Connection reset"，属客户端侧断连，须与 Broken pipe 一样识别为正常离开，
+                // 否则会被误报为 ERROR「WebSocket传输错误」，污染 error 日志并被计入服务端异常。
+                return message.contains("Connection reset") ||
                     message.contains("Broken pipe") ||
                     message.contains("Connection closed") ||
                     message.contains("远程主机强迫关闭了一个现有的连接");
