@@ -419,6 +419,20 @@ public class MessageHandler {
                 // 设备开始录音，进入聆听状态
                 // log.info("开始监听 - Mode: {}", message.getMode());
 
+                // 冗余 listen/start 检测（仅告警不拦截，保留 barge-in 与乱序容错语义）：
+                // 一轮结束后服务端会停在 LISTENING 等下一句，故 LISTENING 下的 start 是合法多轮，不报；
+                // SPEAKING 下不带 msg 的 start 可能是合法打断，也不报。真正的异常是「同一逻辑轮内、上一轮
+                // 已收句进入 THINKING（LLM 在途）时又来 start」，或「播放中带卦象 msg 的 start」——多为解卦
+                // 场景补发第二个带卦象的 listen/start（ISSUE-001 卦象迟到）。它会重置 VAD 并在首帧触发
+                // startStt 换掉 audioSinks，令上一轮在途 STT 命中 turnSink 失配被静默丢弃（ISSUE-004 Mode2）。
+                DeviceState prevState = chatSession.getDeviceState();
+                boolean hasMsg = message.getMsg() != null && !message.getMsg().isEmpty();
+                if (prevState == DeviceState.THINKING
+                        || (prevState == DeviceState.SPEAKING && hasMsg)) {
+                    log.error("重复 listen/start（上一轮仍在途）- SessionId: {}, DeviceId: {}, 当前状态: {}, 携带卦象msg: {}",
+                            sessionId, chatSession.getDeviceIdOrUnknown(), prevState, hasMsg);
+                }
+
                 chatSession.transitionTo(DeviceState.LISTENING);
 
                 // manual 由客户端松手断句，服务端不做自动收句

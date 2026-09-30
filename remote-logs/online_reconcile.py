@@ -304,8 +304,8 @@ def print_summary(records: Sequence[TtsRecord], top_n: int) -> None:
     print("=" * 78)
     print(f"总记录数        : {len(records)}")
     print(f"唯一 RequestId  : {len(unique_req)}" + ("" if len(unique_req) == len(records) else "  (存在重复!)"))
-    print(f"唯一 SessionId  : {len(unique_ses)}")
-    print(f"唯一 DeviceId   : {len(unique_dev)}")
+    print(f"唯一 SessionId  : {len(unique_ses)}  (L1 WS会话)")
+    print(f"唯一 DeviceId   : {len(unique_dev)}  (云端审计口径C，不与本地设备数直接比较)")
     print(f"时间范围        : {first.timestamp}  →  {last.timestamp}")
     print(f"日志文件数      : {len({r.source for r in records})}")
     print("=" * 78)
@@ -707,6 +707,64 @@ def _aggregate_remote_cost(remote_recs: Sequence["RemoteAuditRecord"]) -> Dict[s
         b["sec"] += u.get("duration_sec") or 0.0
         total += c
     return {"total": total, "by_model": dict(by_model)}
+
+
+def _percentile(sorted_vals: List[float], q: float) -> float:
+    """已排序序列的分位数（最近秩法），空序列返回 0。"""
+    if not sorted_vals:
+        return 0.0
+    idx = min(len(sorted_vals) - 1, int(len(sorted_vals) * q))
+    return sorted_vals[idx]
+
+
+def _cloud_service_stats(remote_recs: Sequence["RemoteAuditRecord"]) -> Dict[str, Any]:
+    """云端服务质量统计（数据源：审计 raw 的 first_output_duration/duration/status_code/error_code）。
+
+    口径见 DATA_METRICS.md §9：
+      - 云端延迟：按模型统计首 token 延迟(first_output_duration) 与调用总耗时(duration)，单位 ms，P50/P95/均值。
+      - 云端失败/限流：status_code != 200 或 error_code 非 Success 记为失败；单独统计限流(429/Throttling)。
+    仅描述云端侧；与本地首包延迟(user_analysis)相减可得本地/网关开销。
+    """
+    by_model: Dict[str, Dict[str, List[int]]] = defaultdict(lambda: {"fod": [], "dur": []})
+    status_cnt: Counter = Counter()
+    err_cnt: Counter = Counter()
+    n = fail = throttle = 0
+    for rr in remote_recs:
+        n += 1
+        raw = rr.raw or {}
+        m = rr.model or "unknown"
+        fod = _to_int(raw.get("first_output_duration"))
+        dur = _to_int(raw.get("duration"))
+        if fod is not None:
+            by_model[m]["fod"].append(fod)
+        if dur is not None:
+            by_model[m]["dur"].append(dur)
+        status = str(rr.status or raw.get("status_code") or "").strip()
+        status_cnt[status or "(none)"] += 1
+        ec = (rr.error_code or "").strip()
+        if (status and status != "200") or (ec and ec.lower() != "success"):
+            fail += 1
+            err_cnt[ec or f"HTTP {status}"] += 1
+            if status == "429" or "throttl" in ec.lower():
+                throttle += 1
+    models: Dict[str, Any] = {}
+    for m, d in by_model.items():
+        fod = sorted(d["fod"]); dur = sorted(d["dur"])
+        models[m] = {
+            "type": classify_model(m), "n": len(fod) or len(dur),
+            "fod_p50": round(_percentile(fod, .5)), "fod_p95": round(_percentile(fod, .95)),
+            "fod_avg": round(sum(fod) / len(fod)) if fod else 0,
+            "dur_p50": round(_percentile(dur, .5)), "dur_p95": round(_percentile(dur, .95)),
+            "dur_avg": round(sum(dur) / len(dur)) if dur else 0,
+        }
+    return {
+        "total": n, "fail": fail,
+        "fail_pct": round(fail / n * 100, 2) if n else 0.0,
+        "throttle": throttle,
+        "status_dist": dict(status_cnt),
+        "error_dist": dict(err_cnt),
+        "models": models,
+    }
 
 
 def _aggregate_session_cost(
@@ -1387,10 +1445,10 @@ def _print_session_cost(session_cost: Dict[str, Dict[str, Any]]) -> None:
     stats = _session_cost_stats(session_cost)
     t = stats["total"]
     print("-" * 78)
-    print("会话成本统计（本地成本口径：matched 云端记录；会话＝一轮对话 stt+llm+tts 或 llm+tts）")
+    print("会话成本统计（本地成本口径：matched 云端记录；会话＝一个 SessionId(L1 WS连接)，语音类含STT+LLM+TTS、非语音类含LLM+TTS）")
     print(f"  会话数: {t['sessions']}（完整 {t['complete']} / 残缺 {t['incomplete']}）  "
           f"记录数: {t['records']}  总成本: ¥{t['cost']:.4f}")
-    print(f"  完整会话单轮成本 avg=¥{t['avg']:.4f} median=¥{t['median']:.4f} max=¥{t['max']:.4f}"
+    print(f"  完整会话成本 avg=¥{t['avg']:.4f} median=¥{t['median']:.4f} max=¥{t['max']:.4f}"
           f"   （残缺＝无 LLM/TTS 响应，共 {t['incomplete']} 个 ¥{t['incomplete_cost']:.4f}，不计入均值）")
     widths = [10, 7, 6, 6, 12, 12, 11, 11]
     names = ["类型", "会话数", "完整", "残缺", "总成本", "完整均值", "中位数", "最大"]
@@ -2094,6 +2152,17 @@ def _compute_reconcile(args: argparse.Namespace):
     cost_cloud = _aggregate_remote_cost(remote)
     # 会话成本：按 SessionId 聚合 matched 云端记录（本地成本口径），含分语音类/非语音类
     session_cost = _aggregate_session_cost(reports)
+    # 云端服务质量：覆盖【全部缓存审计天】(days=None)，不受对帐窗口(days_needed)限制，
+    # 避免因本地日志缺某天而漏掉当天的限流/失败事件（如 2026-09-23 的 26 次 Throttling）。
+    # 成本对帐仍用 remote(对帐窗口)；服务质量与成本口径窗口不同，各自标注。
+    remote_all = load_audit_records(
+        days=None,
+        model_regex=(args.sls_model_filter or None),
+        audit_dir=args.audit_dir,
+    )
+    cloud_stats = _cloud_service_stats(remote_all)
+    cloud_stats["scope_days"] = len(cached_complete | cached_partial)
+    cloud_stats["in_reconcile_window"] = len(remote)
 
     meta: Dict[str, Any] = {
         "match_by": match_by, "use_end": use_end, "tolerance": tolerance,
@@ -2103,8 +2172,29 @@ def _compute_reconcile(args: argparse.Namespace):
         "remote_total": len(remote), "local_total": len(records), "file_count": len(files),
         "cost_local": cost_local, "cost_cloud": cost_cloud,
         "session_cost": session_cost,
+        "cloud_stats": cloud_stats,
     }
     return records, files, remote, reports, remote_other, meta
+
+
+def _print_cloud_stats(cloud_stats: Dict[str, Any]) -> None:
+    """控制台打印云端服务质量（延迟 P50/P95 + 失败/限流）。"""
+    if not cloud_stats or not cloud_stats.get("total"):
+        return
+    cs = cloud_stats
+    print("-" * 78)
+    print("云端服务质量统计（数据源：审计 first_output_duration/duration/status_code · 覆盖全部缓存审计天，不受对帐窗口限制）")
+    print(f"  云端调用总数: {cs['total']}  失败: {cs['fail']} ({cs['fail_pct']}%)  其中限流(429/Throttling): {cs['throttle']}")
+    if cs.get("error_dist"):
+        errs = "  ".join(f"{k}×{v}" for k, v in sorted(cs["error_dist"].items(), key=lambda x: -x[1]))
+        print(f"  错误码分布: {errs}")
+    print(f"    {_lj('模型', 28)}{_rj('类型', 6)}{_rj('样本', 6)}"
+          f"{_rj('首token P50', 12)}{_rj('P95', 8)}{_rj('总耗时 P50', 11)}{_rj('P95', 8)}")
+    for m, v in sorted(cs["models"].items(), key=lambda x: -x[1]["n"]):
+        print(f"    {_lj(m, 28)}{_rj(v['type'], 6)}{_rj(v['n'], 6)}"
+              f"{_rj(str(v['fod_p50'])+'ms', 12)}{_rj(str(v['fod_p95'])+'ms', 8)}"
+              f"{_rj(str(v['dur_p50'])+'ms', 11)}{_rj(str(v['dur_p95'])+'ms', 8)}")
+    print("  注：云端首token延迟远小于本地首包延迟时，差额为本地/网关/排队开销（参见 DATA_METRICS.md §9）")
 
 
 def _maybe_auto_pull(args: argparse.Namespace) -> None:
@@ -2146,6 +2236,7 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
         print_reconcile_report(rep, chars_unit_price=args.chars_unit_price,
                                 mode=mode, kind=kind, use_end=meta["use_end"])
     _print_reconcile_totals(reports, meta)
+    _print_cloud_stats(meta.get("cloud_stats") or {})
     if args.reconcile_csv:
         _export_reconcile_reports(reports, args.reconcile_csv, use_end=meta["use_end"])
     if getattr(args, "session_csv", None):
@@ -2423,12 +2514,12 @@ def export_reconcile_html(reports: Sequence[Tuple[str, str, ReconcileReport]], p
                     f"<td class='num'>￥{_bk_cost(v, 'LLM'):.4f}</td>"
                     f"<td class='num'>￥{_bk_cost(v, 'TTS'):.4f}</td></tr>")
 
-        H.append("<h2 class='sec'>会话成本统计（本地成本口径，按 SessionId 聚合）</h2>")
+        H.append("<h2 class='sec'>会话成本统计（本地成本口径，按 SessionId 聚合 · L1 WS会话）</h2>")
         H.append("<div class='cards'>")
-        H.append(f"<div class='card'><div class='k'>会话数（轮）</div><div class='v'>{_st['sessions']}</div>"
+        H.append(f"<div class='card'><div class='k'>WS会话数(L1)</div><div class='v'>{_st['sessions']}</div>"
                  f"<div class='k'>完整 {_st['complete']} / 残缺 {_st['incomplete']}</div></div>")
         H.append(f"<div class='card'><div class='k'>会话总成本</div><div class='v ok'>￥{_st['cost']:.4f}</div>"
-                 f"<div class='k'>完整单轮均值 ￥{_st['avg']:.4f}</div></div>")
+                 f"<div class='k'>完整会话均值 ￥{_st['avg']:.4f}</div></div>")
         for _t in SESSION_TYPES:
             _tv = _sc["by_type"].get(_t)
             if _tv:
@@ -2451,6 +2542,36 @@ def export_reconcile_html(reports: Sequence[Tuple[str, str, ReconcileReport]], p
                  "<b>完整</b>＝matched 段含 LLM+TTS（有一问一答响应）；<b>残缺</b>＝无响应（如仅 STT 被打断、仅 TTS），成本极低。"
                  "单个会话成本＝其 stt/llm/tts 段 matched 云端记录成本之和（与「本地成本」同口径）；STT/LLM/TTS 列为该类型全部会话的组件成本拆分。"
                  "均值/中位数/最大值<b>仅基于完整会话</b>，避免残缺会话拉低。SessionId 为空归入 (unknown)。</div>")
+
+    # 云端服务质量（延迟 + 失败/限流），数据源：全部云端审计记录
+    cloud_stats: Dict[str, Any] = meta.get("cloud_stats") or {}
+    if cloud_stats and cloud_stats.get("total"):
+        cs = cloud_stats
+        H.append("<h2 class='sec'>云端服务质量（延迟与失败/限流 · 数据源：全部缓存审计天）</h2>")
+        H.append("<div class='cards'>")
+        H.append(f"<div class='card'><div class='k'>云端调用总数</div><div class='v'>{cs['total']}</div>"
+                 f"<div class='k'>全部缓存审计天（对帐窗口内 {cs.get('in_reconcile_window', cs['total'])} 条）</div></div>")
+        _fc = 'err' if cs['fail_pct'] > 1 else 'ok'
+        H.append(f"<div class='card'><div class='k'>云端失败率</div><div class='v {_fc}'>{cs['fail_pct']}%</div>"
+                 f"<div class='k'>失败 {cs['fail']} 条（status≠200 或 error≠Success）</div></div>")
+        H.append(f"<div class='card'><div class='k'>限流(429)</div><div class='v'>{cs['throttle']}</div>"
+                 f"<div class='k'>Throttling.RateQuota 次数</div></div>")
+        H.append("</div>")
+        H.append("<table><thead><tr><th>模型</th><th>类型</th><th class='num'>样本</th>"
+                 "<th class='num'>首token P50</th><th class='num'>首token P95</th>"
+                 "<th class='num'>总耗时 P50</th><th class='num'>总耗时 P95</th></tr></thead><tbody>")
+        for m, v in sorted(cs["models"].items(), key=lambda x: -x[1]["n"]):
+            H.append(f"<tr><td>{m}</td><td>{v['type']}</td><td class='num'>{v['n']}</td>"
+                     f"<td class='num'>{v['fod_p50']}ms</td><td class='num'>{v['fod_p95']}ms</td>"
+                     f"<td class='num'>{v['dur_p50']}ms</td><td class='num'>{v['dur_p95']}ms</td></tr>")
+        H.append("</tbody></table>")
+        if cs.get("error_dist"):
+            _errs = "，".join(f"{html.escape(str(k))}×{v}" for k, v in
+                             sorted(cs["error_dist"].items(), key=lambda x: -x[1]))
+            H.append(f"<div class='note'>云端错误码分布：{_errs}。</div>")
+        H.append("<div class='note'><b>首token延迟</b>＝云端收到请求到吐出第一个 token/音频帧的耗时（first_output_duration）；"
+                 "<b>总耗时</b>＝整个调用耗时（duration，STT 为整个流式识别时长）。"
+                 "若云端 TTS 首token延迟远小于 user_analysis 的本地首包延迟，差额即本地/网关/排队开销（见 DATA_METRICS.md §9）。</div>")
 
     # 本地用量汇总
     by_kind: Dict[str, List[TtsRecord]] = defaultdict(list)
@@ -2621,6 +2742,7 @@ def cmd_report(args: argparse.Namespace) -> int:
         print_reconcile_report(rep, chars_unit_price=args.chars_unit_price,
                                 mode=mode, kind=kind, use_end=meta["use_end"])
     _print_reconcile_totals(reports, meta)
+    _print_cloud_stats(meta.get("cloud_stats") or {})
 
     # ③ 导出 HTML（可选同时导出明细 CSV）
     print("\n" + "=" * 78)

@@ -17,6 +17,19 @@ from typing import List, Dict, Optional
 import statistics
 
 
+# ─── 口径基准工具（见 DATA_METRICS.md）─────────────────────────────────────
+
+def canon_device(dev: str) -> str:
+    """归一化设备 ID：device041 / device0041 → device41（数字后缀去前导零）。
+    线上日志中存在同一设备多种补零写法（如 device01265），需统一口径。
+    全项目唯一实现，其余脚本（analyze_users / online_reconcile）一律 import 复用。"""
+    dev = (dev or '').strip()
+    m = re.match(r'^(.*?[^0-9])(0*)(\d+)$', dev)
+    if m:
+        return m.group(1) + str(int(m.group(3)))
+    return dev
+
+
 # ─── 数据模型 ───────────────────────────────────────────────────────────────
 
 class LogEntry:
@@ -172,7 +185,7 @@ def build_sessions(entries: List[LogEntry]) -> List[Dict]:
     """
     by_dev = defaultdict(list)
     for e in entries:
-        by_dev[e.device_id].append(e)
+        by_dev[canon_device(e.device_id)].append(e)
 
     sessions = []
     for dev_id, dev_entries in by_dev.items():
@@ -269,8 +282,9 @@ def _build_concurrency_events(server_sessions: List[Dict]) -> List[tuple]:
     同一时刻先处理 -1(关闭) 再处理 +1(建立)，与峰值/错误率统计口径保持一致。"""
     events = []
     for ss in server_sessions:
-        events.append((ss['start_ts_ms'], 1, ss['device_id']))
-        events.append((ss['end_ts_ms'], -1, ss['device_id']))
+        dev = canon_device(ss['device_id'])
+        events.append((ss['start_ts_ms'], 1, dev))
+        events.append((ss['end_ts_ms'], -1, dev))
     events.sort(key=lambda x: (x[0], x[1]))
     return events
 
@@ -323,8 +337,13 @@ def prepare_frontend_data(entries: List[LogEntry], server_sessions: List[Dict]) 
 
 
 def prepare_summary(entries: List[LogEntry], server_sessions: List[Dict]) -> Dict:
-    """计算摘要卡片数据"""
-    devices = sorted(set(e.device_id for e in entries))
+    """计算摘要卡片数据
+
+    设备数采用口径 B（归一化并集，见 DATA_METRICS.md §2.2）：
+    device-log 设备 ∪ 服务端 WS 连接设备，均经 canon_device 归一化。
+    """
+    devices = sorted(set(canon_device(e.device_id) for e in entries)
+                     | {canon_device(ss['device_id']) for ss in server_sessions})
     dates = sorted(set(e.timestamp[:10] for e in entries))
     type_counts = defaultdict(int)
     feature_counts = defaultdict(int)
@@ -340,6 +359,7 @@ def prepare_summary(entries: List[LogEntry], server_sessions: List[Dict]) -> Dic
         'date_range': f"{dates[0]} ~ {dates[-1]}" if dates else "",
         'device_count': len(devices),
         'devices': devices,
+        'ws_sessions': len(server_sessions),
         'dates': dates,
         'features': sorted(feature_counts.keys()),
         'type_counts': dict(type_counts),
@@ -390,7 +410,7 @@ def compute_concurrency_stats(server_sessions: List[Dict]) -> Dict:
         devices_in_hour = set()
         for ss in server_sessions:
             if ss['start_ts_ms'] < hour_end_ts and ss['end_ts_ms'] > hour_start_ts:
-                devices_in_hour.add(ss['device_id'])
+                devices_in_hour.add(canon_device(ss['device_id']))
         hourly[h] = len(devices_in_hour)
 
     # 时间线数据：在每个事件时间点采样并发设备数，确保能捕获峰值
@@ -446,10 +466,10 @@ def compute_active_devices(entries: List[LogEntry],
     for e in entries:
         ms = _parse_ts_ms(e.timestamp)
         if ms is not None:
-            dev_ts[e.device_id].append(ms)
+            dev_ts[canon_device(e.device_id)].append(ms)
     for ss in server_sessions:
         if ss.get('start_ts_ms') is not None:
-            dev_ts[ss['device_id']].append(ss['start_ts_ms'])
+            dev_ts[canon_device(ss['device_id'])].append(ss['start_ts_ms'])
 
     if not dev_ts:
         return {'anchor': '', 'anchor_ms': 0, 'total_devices': 0, 'windows': []}
@@ -1326,8 +1346,9 @@ function renderSummaryCards() {
   const ttfbs = SESSIONS.filter(s => s.ttfb_ms !== null).map(s => s.ttfb_ms);
   const avgTtfb = ttfbs.length ? Math.round(ttfbs.reduce((a,b)=>a+b,0)/ttfbs.length) : 0;
   document.getElementById('summary-cards').innerHTML = `
-    <div class="card"><div class="label">总会话数</div><div class="value">${nSess}</div><div class="sub">${s.date_range}</div></div>
-    <div class="card"><div class="label">设备数量</div><div class="value">${s.device_count}</div><div class="sub">台活跃设备</div></div>
+    <div class="card"><div class="label">交互会话数</div><div class="value">${nSess}</div><div class="sub">L2 设备端问答交互 · ${s.date_range}</div></div>
+    <div class="card"><div class="label">WS 会话数</div><div class="value">${s.ws_sessions}</div><div class="sub">L1 服务端WebSocket连接</div></div>
+    <div class="card"><div class="label">设备数量</div><div class="value">${s.device_count}</div><div class="sub">台设备（归一化并集）</div></div>
     <div class="card"><div class="label">提问方式</div><div class="value">${nSess}</div><div class="sub"><span class="dir-up">语音(算卦)${voiceCount}</span> / <span class="dir-up">文本(无上行日志)${noUploadCount + textCount}</span></div></div>
     <div class="card"><div class="label">平均TTFB</div><div class="value">${avgTtfb ? avgTtfb + 'ms' : 'N/A'}</div><div class="sub">仅语音会话可计算</div></div>
     <div class="card"><div class="label">总流量</div><div class="value">${s.total_bytes_mb} MB</div><div class="sub">上行+下行</div></div>

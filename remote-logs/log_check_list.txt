@@ -95,3 +95,229 @@
     - 反例（当前 bug）：先发不带 msg 的 listen/start，STT 后再补发 msg，
       应能检测到 guaxiang 在本轮 handleText 时为空 → 该场景须被修复消除。
 ------------------------------------------------------------------------
+
+
+------------------------------------------------------------------------
+[ISSUE-002] 用户感知首包延迟大头在本地/首句累积段，云端并非瓶颈
+------------------------------------------------------------------------
+发现日期   : 2026-09-30
+状态       : OPEN（根因已定位：阻塞式整句 TTS 合成，未消费流式首帧）
+严重级别   : 高（直接拖慢体验、影响留存：首包 4-6s 的用户 D1 留存仅 4.8%）
+影响范围   : 全部走 云端LLM+云端TTS 的语音问答轮次（全设备普遍）
+
+现象
+  用户感知首包（说完话 listen/stop → 收到第一句 TTS 音频）：
+    均 3607ms、P50 3523ms、P95 4562ms、max 6743ms。
+  分段耗时中【TTS首句合成段 tts_first_ms = LLM首token时刻 → 首句TTS音频下发】
+    均 2723ms，约占首包 75%，是最大的一段。
+  而云端本身很快：TTS 首token(first_output_duration) P50 仅 271ms / P95 349ms；
+    LLM 首token P50 378ms。A5 延迟分解（修正版，按可比里程碑）：首句TTS段 avg 2723ms
+    ≈ 云端整句合成 1552ms + 本地下载/落盘/切片 ~1171ms；云端首帧仅 271ms 却因阻塞式未被消费。
+
+根因（已定位：阻塞式整句 TTS 合成，未用流式首帧）
+  代码验证 FileSynthesizer.java L36-66：synthesize 用 SentenceHelper 分句后，对首句调用
+    ttsService.textToSpeechWithId(text) —— 该方法为【阻塞式】(AliyunTtsService conv.call()
+    返回完整音频 URL→下载→落盘)，返回后才在 L49 打印「[TTS]语音合成对帐」(=tts_first_ts)
+    并 readAsPcmChunks→player.play。即：服务端等到【整句音频全部合成完】才开始播放。
+  数据佐证（全量审计 P50/avg）：
+    云端 TTS 首帧 first_output_duration = 271ms，但整句 duration = 1503ms/avg 1552ms；
+    本地首句TTS段 tts_first_ms(llm_first→tts_first) = avg 2723ms
+      ≈ 云端整句合成 1552ms + 本地下载/落盘/切片/调度 ~1171ms。
+  结论：首包大头 =「等云端把整句合成完」(阻塞式，~1.5s) +「本地音频落盘切片」(~1.2s)；
+    云端其实 271ms 就能出首帧，但当前架构不消费流式首帧，白白多等 ~1232ms/句。
+  关联既有决策：SentenceHelper 分句长度策略、TTS 流式首句短阈值、FileSynthesizer firstSentence。
+
+证据（DATA_METRICS.md §9.1/§9.2；user_analysis.html + reconcile_report.html）
+  analyze_users 质量 phases：用户感知首包 P50 3523ms、TTS首句合成 均 2723ms。
+  online_reconcile 云端服务质量：qwen-audio-3.1-tts-flash 首token P50 271ms、
+    qwen3.5-flash(LLM) 首token P50 378ms。
+  首包与提问长度几乎无关（各长度分档均值差仅 296ms）→ 固定开销而非输入规模导致。
+
+检测方法
+  analyze_users.py::analyze_quality 的 phases['用户感知首包']/['TTS首句合成']；
+  A5 analyze_users.py::compute_latency_decomposition 的 local_overhead_p50/local_share_pct；
+  云端首token：online_reconcile.py::_cloud_service_stats models[*].fod_p50。
+
+期望行为
+  用户感知首包 P50 显著下降（目标 < 2s）；tts_first_ms 段中「等 LLM 首句」与
+  「本地 TTS 调度」占比可分别观测，且本地调度段接近云端 TTS 首token(271ms)量级。
+
+修复归属
+  服务端（首要）：改用流式 TTS——首帧音频到达即推给 player.play（而非等整句文件落盘），
+    预计每句可省 ~1232ms（云端整句 1503ms − 首帧 271ms）。
+  次要：减小首句分句阈值（更早触发 TTS）；本地音频避免整文件落盘再 readAsPcmChunks，
+    改流式切片直接下发，压缩 ~1171ms 本地开销。
+
+回归判定
+  改流式后 analyze_users phases['TTS首句合成'].avg 应从 2723ms 降到接近「云端首帧+本地流式处理」
+    量级（目标 <1s）；A5 latency_decomp.stream_save_p50 反映的理论节省应兼现为 用户感知首包 P50 下降。
+------------------------------------------------------------------------
+
+
+------------------------------------------------------------------------
+[ISSUE-003] 1006 异常断流高度集中于少数设备，且基本无服务端异常
+------------------------------------------------------------------------
+发现日期   : 2026-09-30
+状态       : OPEN（根因已定位：客户端侧网络断连 Broken pipe，服务端无 bug）
+严重级别   : 中（打断真实会话、伤体验；但集中于少数设备、非全局，且非服务端故障）
+影响范围   : 680 个 WS 会话中 87 个以 1006 异常断流（占 12.8%）；
+             top3 设备 device1317(24)、device143(14)、device1265(6) 合计 44/87 ≈ 51%。
+
+现象
+  87 个 close_code==1006（非空闲超时）会话，close_reason 分布：Broken pipe 86 + Connection reset 1
+  ——100% 为「服务端向已被客户端关闭的 socket 写数据」触发的管道破裂，即客户端侧先断了连接。
+  这些并非探活：86/87 断流前已有有效提问(questions>0)、0/87 是零轮次空会话；
+  会话时长 P50 64.9s（60/87 > 60s）——都是真实使用了约 1 分钟后才掉的线。
+  设备维度高度集中且按天聚集：device1317 24 次集中在 09-27(7)/09-28(15)，
+  device143 14 次集中在 09-24(8)/09-25(5)——同一设备在特定日期反复断流。
+
+根因（已定位：客户端网络侧断连，非服务端缺陷）
+  Broken pipe/Connection reset 是操作系统级信号：对端(设备)已关闭 TCP 连接，服务端再次
+  写音频/消息时得到 EPIPE。结合「断流前均有真实提问、时长约 1 分钟、按设备按天聚集」，
+  判定为设备侧网络抖动/WiFi 掉线/设备休眠或复位导致的客户端断连（87 个中仅 1 个在服务端
+  dialogue-error 有传输错误记录，其余 86 个服务端无任何异常）。集中于少数设备的特定日期 →
+  指向这些设备所处网络环境差（弱网/干扰/供电），而非固件批次或服务端/全局网络问题。
+
+证据（DATA_METRICS.md §9.4；user_analysis.html）
+  analyze_users broken_1006：total 87、reason_dist {Broken pipe:86, Connection reset:1}、
+  with_server_error 1、no_server_trace 86；top_devices device1317(24)/device143(14)/device1265(6)；
+  断流会话 86/87 questions>0、时长 P50 64.9s。
+
+检测方法
+  analyze_users.py::parse_error_log 按 SessionId 关联 close_code==1006 会话与 dialogue-error
+  的「WebSocket传输错误」；quality['broken_1006']（含 reason_dist/top_devices）。
+  RE_WS_CLOSE 已扩展捕获 close_reason，Broken pipe/Connection reset 即客户端侧断连铁证。
+
+期望行为
+  1006 断流率下降且不再集中于个别设备/个别日期；服务端对 Broken pipe 降级为正常回收
+  （INFO 级、不计入异常告警），减少 error 日志噪音。
+
+修复归属
+  设备/固件/网络侧（首要）：排查 device1317/device143 等高集中设备的 WiFi 信号/供电/休眠策略，
+  增强断线自动重连与会话恢复体验。
+  服务端（次要）：将 Broken pipe 类 1006 视为客户端正常离开，降低日志级别、不计入服务异常。
+
+回归判定
+  broken_1006.total 及 top_devices 集中度下降；reason_dist 中 Broken pipe 占比下降；
+  no_server_trace 维持高位则持续佐证客户端侧断连（服务端无 bug）。
+------------------------------------------------------------------------
+
+
+------------------------------------------------------------------------
+[ISSUE-004] 算卦(语音问事)请求约 1/3 静默失败：收音过短无STT(Mode1) + STT被turnSink丢弃(Mode2)
+------------------------------------------------------------------------
+发现日期   : 2026-09-30
+状态       : OPEN（根因已定位：137失败=Mode1无STT 99 + Mode2 STT被丢 38；服务端两路均无兜底反馈）
+严重级别   : 高（核心功能「算卦」34% 请求无任何回复，严重伤体验与留存）
+影响范围   : 400 个算卦(带卦象提示词)会话中 137 个无 LLM/TTS 回复（失败率 34.2%）；
+             在 195 个「空会话(questions==0)」中占 125 个（子类型B）。
+
+现象
+  原「空会话率 28.7%(≈195)」实为两类截然不同的群体，须分层：
+    子类型A 70 个：rounds_total==0，连一次 listen 轮次都没有，56/70 时长 <5s
+      ——探活/保活/误连，基本无害（其中 11 个以 1006 断开）。
+    子类型B 125 个：有 voice 轮次(voice_rounds>0 125/125)、带卦象提示词(guaxiang>0 114/125)，
+      但 stt_rounds==0(0/125)、LLM 调用 0、TTS 回复 0 ——用户发起了算卦却什么都没收到。
+  子类型B 轮次 fail_stage：无STT对帐 117 + 空识别(无有效语音) 25；会话时长 P50 9.3s、close_code 多为 1000。
+  注：子类型B(125)是 questions==0 视角；按算卦全体看，137 个无LLM回复 = Mode1(无STT对帐)99 + Mode2(有STT对帐但被丢)38，见根因。
+
+根因（已定位：算卦静默失败有两条互补路径，137 失败 = Mode1 99 + Mode2 38）
+  算卦流程：设备发 listen/start(mode=manual, msg=解卦提示词+卦象) → 用户语音问事 →
+  listen/stop → STT → LLM(卦象作上下文) → TTS 卦辞。提示词写明「请根据用户以上语音问事类型…」，须有用户语音才能成卦。
+
+  Mode 1 · 收音过短/无有效音频 → 无 STT（99/137，主因）：
+    设备过快发送 listen/stop，服务端未收到有效音频 → 无 STT 对帐 → 不触发 LLM/TTS → 静默关闭。
+    对照：成功算卦(02ff57f9/device01232) start→stop 间隔 ~6s，STT→LLM→TTS 卦辞 ✓；
+          失败算卦(2a7405df/device060) 间隔仅 0.5s，随即 close(1000)，全程无 STT/LLM/TTS。
+    群体量化：失败轮次 start→stop 间隔 P50 仅 2.17s，成功提问轮次 P50 6.68s。
+
+  Mode 2 · STT 已识别但被静默丢弃 → 无 LLM（38/137，服务端 bug）：
+    解卦场景设备连发 listen/start(带卦象 msg)，每次 listen/start 调 vadService.initSession() 重置 VAD、
+    第一帧音频触发 startStt→closeAudioStream()+createAudioStream() 替换 audioSinks；上一轮在途 STT 返回时
+    命中 `session.getAudioSinks() != turnSink` 失配，bargeIn==false 分支直接 return（无日志）→ STT 对帐已打印
+    但 sendSttMessage 未发出 → 不调用 LLM。此为已记录的可观测性缺口（DialogueService turnSink 失配静默丢弃 STT 结果）。
+
+  共同服务端缺陷：无论 Mode1(无STT) 还是 Mode2(STT被丢)，卦象提示词均已就位，服务端却既不基于卦象兜底
+    生成通用卦辞、也不回放「没听清，请再说一次」，而是静默关闭——最差的失败体验。
+
+证据（user_analysis.html；dialogue 原始日志）
+  算卦会话 400：有 LLM+TTS 263、无 LLM 137（grep 收到消息含「卦象/解卦流程/上卦…下卦」×「开始调用大模型」交叉）。
+  失败样本 2a7405df-1491-c388-533e-bce0b186134c(device060)：
+    08:19:45.824 listen/start(msg=解卦提示词,mode=manual) → 08:19:46.341 listen/stop → 08:19:54 close(1000)，无 STT/LLM/TTS。
+  成功样本 02ff57f9-ec1e-c95f-cdcf-7325b7f822e5(device01232)：
+    15:29:02 listen/start → 15:29:08 listen/stop(间隔6s) → STT对帐 → LLM → 15:29:12 TTS 卦辞 ✓。
+  B 轮次 start→stop 间隔 P50 2.17s vs 成功提问轮次 6.68s。
+  失败模式拆分(grep 算卦∩无LLM=137 × 是否有「语音识别对帐」)：Mode1 无STT对帐 99、Mode2 有STT对帐但无LLM 38。
+
+检测方法
+  ① 算卦成功率（已固化：analyze_users.py::compute_fortune_stats → quality.fortune）：含卦象提示词的会话中，有「开始调用大模型」的占比（当前 263/400=65.8%）。
+  ② 静默失败子集：guaxiang>0 且 stt_rounds==0 且 llm_call==0 的会话（当前 125~137）。
+  ③ 收音窗口：listen/start→listen/stop 间隔 < 阈值(如 3s) 且无 STT 对帐 → 判为收音不足。
+  ④ empty_session 须分层报告：A(探活,rounds_total==0) 与 B(算卦失败,有卦象无回复) 分开统计。
+  ⑤ Mode2 检测：算卦会话有「语音识别对帐」但无「sendSttMessage」/无「开始调用大模型」→ turnSink 失配静默丢弃(38个)。
+  ⑥ 冗余 listen/start 服务端锚点（已落地）：MessageHandler Start 分支在 transitionTo(LISTENING) 前抓 prevState，
+    命中「prevState==THINKING」或「prevState==SPEAKING 且带卦象msg」时打 error「重复 listen/start（上一轮仍在途）」，
+    携带 SessionId/DeviceId/当前状态/是否带msg。可直接 grep「重复 listen/start」量化客户端时序违规的频次与波及会话，
+    作为 ISSUE-001(卦象迟到) 与 Mode2(STT被丢) 的共同源头信号。判据刻意排除 LISTENING(一轮收尾后 Player.sendStop
+    会迁回 LISTENING 等下一句→合法多轮) 与 SPEAKING+不带msg(可能是合法 barge-in)，以零误报为先。
+
+期望行为
+  算卦请求要么正常成卦（STT→LLM→TTS），要么在收音不足时给出明确反馈（重试提示或基于卦象的兜底卦辞），
+  绝不静默无响应；算卦成功率从 65.8% 提升到 >95%；空会话率按 A/B 分层后，B 子集占比显著下降。
+
+修复归属
+  Mode1 设备/客户端（首要）：保证用户开口后再 listen/stop，延长/自适应收音窗口，避免 0.5~2s 秒停；
+    或在无有效语音时本地提示用户重试。
+  Mode2 服务端（bug）：DialogueService turnSink 失配分支(bargeIn==false)直接 return 无日志——
+    补 INFO 日志(携带 audioSinks 状态/bargeIn/Chars/text)，并修复解卦连发 listen/start 重置 audioSinks
+    导致在途 STT 被误丢的时序（详见既有记录：DialogueService turnSink 失配静默丢弃 STT 结果）。
+    [已完成·可观测性] MessageHandler 现对「在途冗余 listen/start」(THINKING / SPEAKING+卦象msg) 打 error，
+    见检测方法⑥；剩余「修复时序」与「turnSink 失配分支补日志」仍待办。
+  服务端（共同兜底）：listen/stop 后若本轮无有效回复但 session.guaxiang 已就位，
+    应触发一次「基于卦象的通用卦辞」LLM 调用，或下发「没听清，请再说一次」语音，避免静默关闭。
+
+回归判定
+  算卦会话「无 LLM 回复」占比从 34.2% 降至 <5%；Mode1(无STT对帐)与 Mode2(有STT对帐无sendSttMessage)均显著下降；
+  失败轮次 start→stop 间隔 P50 上升至接近成功轮次（>5s）；Mode2 失配分支出现 INFO 丢弃日志（可观测）；
+  服务端兜底路径在 STT 空/被丢时可见 LLM/TTS 或「没听清」提示日志。
+------------------------------------------------------------------------
+
+
+------------------------------------------------------------------------
+[ISSUE-005] 云端 TTS 限流(429 Throttling.RateQuota) 短时突发
+------------------------------------------------------------------------
+发现日期   : 2026-09-30
+状态       : OPEN（根因较明确：瞬时并发超 QPS 配额；待评估扩容/退避）
+严重级别   : 中（限流会导致 TTS 失败/无回复；但为短时突发，非持续）
+影响范围   : 26 次 Throttling.RateQuota，全部为 qwen-audio-3.1-tts-flash，
+             全部集中在 2026-09-23 15:03:25 ~ 15:03:37（12 秒内）。
+
+现象
+  云端整体失败率 1.31%（29/2221），其中限流 26 次 + IdleTimeout 3 次。
+  26 次限流全部发生在 12 秒的极短窗口内，当天该 TTS 模型共 252 次调用，
+  限流占当天 TTS 调用约 10.3%——典型的瞬时并发 QPS 超配额，而非全天持续超限。
+
+根因（较明确，待评估处置）
+  短时间内并发 TTS 合成请求数超过百炼 RateQuota（QPS 配额），触发 429。
+  可能诱因：多设备同时发起提问的并发峰值、或重试放大。非模型本身故障。
+
+证据（DATA_METRICS.md §9.1；reconcile_report.html 云端服务质量）
+  online_reconcile _cloud_service_stats：throttle 26、error_dist
+  {Throttling.RateQuota:26, IdleTimeout:3}；audit-2026-09-23.jsonl 中 26 条
+  status=429 全为 qwen-audio-3.1-tts-flash，start_time 全在 15:03:25~37。
+
+检测方法
+  online_reconcile.py::_cloud_service_stats 的 throttle/error_dist；
+  按 status_code==429 聚合到分钟级观察是否突发。
+
+期望行为
+  限流次数趋近 0；并发峰值时通过退避重试或配额扩容避免 429。
+
+修复归属
+  云端配额：评估 TTS 模型 RateQuota 是否需扩容；
+  服务端/客户端：对 429 增加指数退避重试，削平并发峰值。
+
+回归判定
+  _cloud_service_stats.throttle 在后续对帐周期为 0 或显著下降；
+  若仍突发，核对是否需提配额或加并发限流。
+------------------------------------------------------------------------
