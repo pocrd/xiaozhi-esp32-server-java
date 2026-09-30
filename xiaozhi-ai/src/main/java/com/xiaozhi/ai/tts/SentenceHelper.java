@@ -240,10 +240,10 @@ public class SentenceHelper implements ChatConverter {
     
     /**
      * 获取当前应使用的最小句子长度。
-     * 首个句子使用较短阈值（MIN_SENTENCE_LENGTH/2）以加快首句响应速度，
+     * 首个句子使用较短阈值（MIN_SENTENCE_LENGTH/4）以加快首句响应速度，
      * 后续句子使用标准阈值（MIN_SENTENCE_LENGTH）以减少TTS调用次数。
      */
     private int getCurrentMinLength() {
-        return firstSentenceSent ? MIN_SENTENCE_LENGTH : MIN_SENTENCE_LENGTH / 2;
+        return firstSentenceSent ? MIN_SENTENCE_LENGTH : MIN_SENTENCE_LENGTH / 4;
     }
 }
