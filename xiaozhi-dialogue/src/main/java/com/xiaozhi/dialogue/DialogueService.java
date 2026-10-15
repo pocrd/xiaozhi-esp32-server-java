@@ -317,6 +317,11 @@ public class DialogueService{
                     return;
                 }
                 if (!StringUtils.hasText(text)) {
+                    // STT 无有效识别结果（空白语音），状态从 THINKING 回落到 IDLE，
+                    // 避免状态卡在 THINKING 导致后续 listen/start 被误判为重复
+                    if (session.getDeviceState() == DeviceState.THINKING) {
+                        session.transitionTo(DeviceState.IDLE);
+                    }
                     return;
                 }
                 // 播放刚结束时拾回的尾音也会被识别成一句话

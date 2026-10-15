@@ -1,29 +1,32 @@
 package com.xiaozhi.dialogue.audio;
 
-import com.xiaozhi.communication.common.ChatSession;
-import com.xiaozhi.communication.common.SessionManager;
-import com.xiaozhi.common.model.bo.DeviceBO;
-import com.xiaozhi.common.model.bo.RoleBO;
-import com.xiaozhi.dialogue.audio.vad.VadModel.InferenceResult;
-import com.xiaozhi.dialogue.audio.vad.SileroVadModel;
-import com.xiaozhi.role.service.RoleService;
-import com.xiaozhi.utils.AudioUtils;
-import com.xiaozhi.utils.OpusProcessor;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
+import com.xiaozhi.common.model.bo.DeviceBO;
+import com.xiaozhi.common.model.bo.RoleBO;
+import com.xiaozhi.communication.common.ChatSession;
+import com.xiaozhi.communication.common.SessionManager;
+import com.xiaozhi.dialogue.audio.vad.SileroVadModel;
+import com.xiaozhi.dialogue.audio.vad.VadModel.InferenceResult;
 import com.xiaozhi.event.TtsPlaybackCompletedEvent;
+import com.xiaozhi.role.service.RoleService;
+import com.xiaozhi.utils.AudioUtils;
+import com.xiaozhi.utils.OpusProcessor;
+
 import jakarta.annotation.PreDestroy;
 import jakarta.annotation.Resource;
-
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-
 import lombok.extern.slf4j.Slf4j;
 /**
  * 语音活动检测服务
@@ -269,8 +272,17 @@ public class VadService {
                     pcmData = aecService.process(sessionId, pcmData, echoTimestamp);
                 }
 
-                // manual 模式跳过 Silero：首帧起流，其余持续喂流，收句由 listen/stop 触发
+                // manual 模式跳过 Silero 断句状态机，但加能量过滤避免空白音频浪费 STT
                 if (!state.autoSegment) {
+                    float[] manualSamples = bytesToFloats(pcmData);
+                    float manualEnergy = calcEnergy(manualSamples);
+                    if (manualEnergy < energyThreshold) {
+                        // 静音帧：不送 STT，但保持 speaking 状态维持流打开
+                        if (state.isSpeaking()) {
+                            return new VadResult(VadStatus.SPEECH_CONTINUE, null);
+                        }
+                        return new VadResult(VadStatus.NO_SPEECH, null);
+                    }
                     if (!state.isSpeaking()) {
                         state.pcmData.clear();
                         state.setSpeaking(true);
