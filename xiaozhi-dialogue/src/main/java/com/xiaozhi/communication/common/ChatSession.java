@@ -28,6 +28,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -108,6 +109,11 @@ public abstract class ChatSession {
      * 移入 Persona 会增加 null 判断复杂度而无收益。
      */
     protected volatile Sinks.Many<byte[]> audioSinks;
+    /**
+     * 被取代轮次的 STT 暂存结果。解卦场景设备连发 listen/start 导致上一轮 STT 被取代时，
+     * 若旧 STT 已识别出有效文本，暂存于此供新一轮 STT 空结果时消费，避免用户说的话被静默丢弃。
+     */
+    private volatile CompletableFuture<String> pendingSttText;
     /** 唤醒词只有一小段，超过这个帧数说明是异常流量 */
     private static final int MAX_WAKE_WORD_FRAMES = 100;
     /**

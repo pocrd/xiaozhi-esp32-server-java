@@ -11,23 +11,12 @@ import sys
 import glob
 import json
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from typing import List, Dict, Optional
 import statistics
 
 
-# ─── 口径基准工具（见 DATA_METRICS.md）─────────────────────────────────────
-
-def canon_device(dev: str) -> str:
-    """归一化设备 ID：device041 / device0041 → device41（数字后缀去前导零）。
-    线上日志中存在同一设备多种补零写法（如 device01265），需统一口径。
-    全项目唯一实现，其余脚本（analyze_users / online_reconcile）一律 import 复用。"""
-    dev = (dev or '').strip()
-    m = re.match(r'^(.*?[^0-9])(0*)(\d+)$', dev)
-    if m:
-        return m.group(1) + str(int(m.group(3)))
-    return dev
 
 
 # ─── 数据模型 ───────────────────────────────────────────────────────────────
@@ -146,8 +135,8 @@ def parse_server_logs(log_dir: str) -> List[Dict]:
                     if sid in opens:
                         open_ts_str, open_dev = opens.pop(sid)
                         try:
-                            start_dt = datetime.strptime(open_ts_str, '%Y-%m-%d %H:%M:%S.%f')
-                            end_dt = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S.%f')
+                            start_dt = datetime.strptime(open_ts_str, '%Y-%m-%d %H:%M:%S.%f').replace(tzinfo=timezone.utc)
+                            end_dt = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S.%f').replace(tzinfo=timezone.utc)
                             sessions.append({
                                 'session_id': sid,
                                 'device_id': open_dev,
@@ -160,7 +149,7 @@ def parse_server_logs(log_dir: str) -> List[Dict]:
     # 未关闭的连接，用最后一条日志时间作为结束时间
     for sid, (ts_str, dev) in opens.items():
         try:
-            start_dt = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S.%f')
+            start_dt = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S.%f').replace(tzinfo=timezone.utc)
             sessions.append({
                 'session_id': sid,
                 'device_id': dev,
@@ -185,7 +174,7 @@ def build_sessions(entries: List[LogEntry]) -> List[Dict]:
     """
     by_dev = defaultdict(list)
     for e in entries:
-        by_dev[canon_device(e.device_id)].append(e)
+        by_dev[e.device_id].append(e)
 
     sessions = []
     for dev_id, dev_entries in by_dev.items():
@@ -282,7 +271,7 @@ def _build_concurrency_events(server_sessions: List[Dict]) -> List[tuple]:
     同一时刻先处理 -1(关闭) 再处理 +1(建立)，与峰值/错误率统计口径保持一致。"""
     events = []
     for ss in server_sessions:
-        dev = canon_device(ss['device_id'])
+        dev = ss['device_id']
         events.append((ss['start_ts_ms'], 1, dev))
         events.append((ss['end_ts_ms'], -1, dev))
     events.sort(key=lambda x: (x[0], x[1]))
@@ -302,7 +291,7 @@ def _add_session_concurrency(sessions: List[Dict], server_sessions: List[Dict]):
     timed = []
     for s in sessions:
         try:
-            dt = datetime.strptime(s['timestamp'], '%Y-%m-%d %H:%M:%S.%f')
+            dt = datetime.strptime(s['timestamp'], '%Y-%m-%d %H:%M:%S.%f').replace(tzinfo=timezone.utc)
             timed.append((int(dt.timestamp() * 1000), s))
         except Exception:
             s['concurrency'] = 1
@@ -339,11 +328,11 @@ def prepare_frontend_data(entries: List[LogEntry], server_sessions: List[Dict]) 
 def prepare_summary(entries: List[LogEntry], server_sessions: List[Dict]) -> Dict:
     """计算摘要卡片数据
 
-    设备数采用口径 B（归一化并集，见 DATA_METRICS.md §2.2）：
-    device-log 设备 ∪ 服务端 WS 连接设备，均经 canon_device 归一化。
+    设备数采用口径 B（并集，见 DATA_METRICS.md §2.2）：
+    device-log 设备 ∪ 服务端 WS 连接设备。
     """
-    devices = sorted(set(canon_device(e.device_id) for e in entries)
-                     | {canon_device(ss['device_id']) for ss in server_sessions})
+    devices = sorted(set(e.device_id for e in entries)
+                     | {ss['device_id'] for ss in server_sessions})
     dates = sorted(set(e.timestamp[:10] for e in entries))
     type_counts = defaultdict(int)
     feature_counts = defaultdict(int)
@@ -410,7 +399,7 @@ def compute_concurrency_stats(server_sessions: List[Dict]) -> Dict:
         devices_in_hour = set()
         for ss in server_sessions:
             if ss['start_ts_ms'] < hour_end_ts and ss['end_ts_ms'] > hour_start_ts:
-                devices_in_hour.add(canon_device(ss['device_id']))
+                devices_in_hour.add(ss['device_id'])
         hourly[h] = len(devices_in_hour)
 
     # 时间线数据：在每个事件时间点采样并发设备数，确保能捕获峰值
@@ -466,10 +455,10 @@ def compute_active_devices(entries: List[LogEntry],
     for e in entries:
         ms = _parse_ts_ms(e.timestamp)
         if ms is not None:
-            dev_ts[canon_device(e.device_id)].append(ms)
+            dev_ts[e.device_id].append(ms)
     for ss in server_sessions:
         if ss.get('start_ts_ms') is not None:
-            dev_ts[canon_device(ss['device_id'])].append(ss['start_ts_ms'])
+            dev_ts[ss['device_id']].append(ss['start_ts_ms'])
 
     if not dev_ts:
         return {'anchor': '', 'anchor_ms': 0, 'total_devices': 0, 'windows': []}
@@ -525,9 +514,9 @@ SVC = {
 
 
 def _parse_ts_ms(ts_str):
-    """解析时间戳字符串为毫秒时间戳"""
+    """解析时间戳字符串为毫秒时间戳（按 UTC 解析）"""
     try:
-        dt = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S.%f')
+        dt = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S.%f').replace(tzinfo=timezone.utc)
         return int(dt.timestamp() * 1000)
     except Exception:
         return None
@@ -652,7 +641,7 @@ def correlate_sessions(client_sessions: List[Dict],
     for cs in client_sessions:
         dev = cs['device_id']
         try:
-            dt = datetime.strptime(cs['timestamp'], '%Y-%m-%d %H:%M:%S.%f')
+            dt = datetime.strptime(cs['timestamp'], '%Y-%m-%d %H:%M:%S.%f').replace(tzinfo=timezone.utc)
             cs_start = int(dt.timestamp() * 1000)
         except Exception:
             continue

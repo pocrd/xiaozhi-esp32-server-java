@@ -6,6 +6,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.springframework.ai.chat.messages.UserMessage;
@@ -306,6 +308,12 @@ public class DialogueService{
                             session.getSessionId(), session.getDeviceIdOrUnknown(),
                             session.getAudioSinks() == null ? "已关闭" : "被新一轮替换",
                             bargeIn.get(), droppedText != null ? droppedText.length() : 0, droppedText);
+                    // 暂存被丢弃的有效识别结果：解卦场景设备连发 listen/start 导致本轮被取代，
+                    // 若旧 STT 已识别出有效文本，暂存到 pendingSttText 供新一轮 STT 空结果时消费，
+                    // 避免用户说的话被静默丢弃（对应 stt_no_llm 问题的主要成因）。
+                    if (StringUtils.hasText(droppedText)) {
+                        session.setPendingSttText(CompletableFuture.completedFuture(droppedText));
+                    }
                     if (bargeIn.get()) {
                         resolveBargeIn(session, persona, droppedText);
                     }
@@ -317,12 +325,33 @@ public class DialogueService{
                     return;
                 }
                 if (!StringUtils.hasText(text)) {
-                    // STT 无有效识别结果（空白语音），状态从 THINKING 回落到 IDLE，
-                    // 避免状态卡在 THINKING 导致后续 listen/start 被误判为重复
-                    if (session.getDeviceState() == DeviceState.THINKING) {
-                        session.transitionTo(DeviceState.IDLE);
+                    // STT 无有效识别结果，先检查是否有被取代轮次暂存的有效文本：
+                    // 解卦场景下旧 STT 被取代时暂存了识别结果，新 STT 无音频输入返回空，
+                    // 此时消费暂存文本继续走 LLM 流程，避免用户说了话却没任何回复。
+                    CompletableFuture<String> pending = session.getPendingSttText();
+                    if (pending != null) {
+                        session.setPendingSttText(null);
+                        try {
+                            String pendingText = pending.get(3, TimeUnit.SECONDS);
+                            if (StringUtils.hasText(pendingText)) {
+                                log.info("[STT] 消费上一轮暂存的识别结果 - SessionId: {}, DeviceId: {}, Chars: {}, text: {}",
+                                        sessionId, session.getDeviceIdOrUnknown(), pendingText.length(), pendingText);
+                                sttResult = SttResult.textOnly(pendingText);
+                                text = pendingText;
+                            }
+                        } catch (Exception e) {
+                            log.warn("[STT] 获取暂存识别结果失败 - SessionId: {}, DeviceId: {}, {}",
+                                    sessionId, session.getDeviceIdOrUnknown(), e.getMessage());
+                        }
                     }
-                    return;
+                    if (!StringUtils.hasText(text)) {
+                        // 确实无有效文本（也无暂存），状态从 THINKING 回落到 IDLE，
+                        // 避免状态卡在 THINKING 导致后续 listen/start 被误判为重复
+                        if (session.getDeviceState() == DeviceState.THINKING) {
+                            session.transitionTo(DeviceState.IDLE);
+                        }
+                        return;
+                    }
                 }
                 // 播放刚结束时拾回的尾音也会被识别成一句话
                 if (isEcho(session, text)) {
