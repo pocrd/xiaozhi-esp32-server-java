@@ -275,11 +275,16 @@ public class DialogueService{
                 }
 
                 if (turnSink == null) {
+                    log.warn("[STT] 音频流已为空，跳过识别 - SessionId: {}, DeviceId: {}", sessionId, session.getDeviceIdOrUnknown());
                     return;
                 }
 
                 Persona persona = session.getPersona();
                 if (persona == null || persona.getSttService() == null) {
+                    log.warn("[STT] Persona 或 SttService 不可用，跳过识别 - SessionId: {}, DeviceId: {}, persona: {}, sttService: {}",
+                            sessionId, session.getDeviceIdOrUnknown(),
+                            persona != null ? "存在" : "null",
+                            persona != null && persona.getSttService() != null ? "存在" : "null");
                     return;
                 }
 
@@ -304,7 +309,7 @@ public class DialogueService{
                     // 本分支是 STT 出终稿后唯一无日志的丢弃出口：音频流为 null 表示已被 abort/close 关闭，
                     // 非 null 表示已被新一轮 startStt 替换。解卦场景设备连发 listen/start(卦象)→stop 时，
                     // 上一轮在途 STT 会命中此处被静默丢弃，缺日志时「STT 已识别却未调用 LLM」无从定位，故补上。
-                    log.info("[STT] 本轮已被取代，丢弃识别结果 - SessionId: {}, DeviceId: {}, 音频流: {}, bargeIn: {}, Chars: {}, text: {}",
+                    log.warn("[STT] 本轮已被取代，丢弃识别结果 - SessionId: {}, DeviceId: {}, 音频流: {}, bargeIn: {}, Chars: {}, text: {}",
                             session.getSessionId(), session.getDeviceIdOrUnknown(),
                             session.getAudioSinks() == null ? "已关闭" : "被新一轮替换",
                             bargeIn.get(), droppedText != null ? droppedText.length() : 0, droppedText);
