@@ -46,9 +46,48 @@ public class AliyunTtsService implements TtsService {
      * 多音字/易错词注音字典：key 为待注音的字或词，value 为带声调数字的拼音（如 qian2 = qián）。
      * 通过 qwen-audio-3.1 系列的 hot_fix.pronunciation 生效，避免多音字被读错（如「乾」默认可能读 gān）。
      * 直接在此维护即可，规模变大也不影响单次请求——见 {@link #buildHotFix(String)} 的按句过滤。
+     *
+     * <p>key 支持多字词：此时 value 必须是覆盖整个词、按空格分隔的逐字拼音（如「天地否」= tian1 di4 pi3）。
+     * 用词做 key 可实现「按上下文区分读音」——只有句中出现该完整词时才命中，从而只纠正这个词里的多音字，
+     * 不影响该字在其他语境下的默认读音。例如「否」在「天地否」中读 pi3，而单独出现（是否/否定）仍读默认 fou3，
+     * 因此这里用词级 key「天地否」而非单字 key「否」，避免把所有「否」都误读成 pi3。
      */
-    private static final Map<String, String> PRONUNCIATION_DICT = Map.of(
-            "乾", "qian2", "否", "pi3"
+    private static final Map<String, String> PRONUNCIATION_DICT = Map.ofEntries(
+            // ── 词级 key：多音字在日常语中另有常用读音，必须用整词锚定，避免误伤其他语境 ──
+            Map.entry("天地否", "tian1 di4 pi3"),          // 否 pǐ（非 fǒu：是否/否定）
+            Map.entry("水雷屯", "shui3 lei2 zhun1"),       // 屯 zhūn（非 tún：屯兵/屯粮）
+            Map.entry("风天小畜", "feng1 tian1 xiao3 xu4"), // 畜 xù（非 chù：牲畜）
+            Map.entry("山天大畜", "shan1 tian1 da4 xu4"),   // 畜 xù（非 chù：牲畜）
+            Map.entry("山地剥", "shan1 di4 bo1"),          // 剥 bō（非 bāo：剥皮）
+            Map.entry("山火贲", "shan1 huo3 bi4"),         // 贲 bì（非 bēn：贲门）
+            Map.entry("火雷噬嗑", "huo3 lei2 shi4 he2"),   // 噬嗑 shì hé（传统读法；单字「嗑」现代多读 kè）
+            Map.entry("雷水解", "lei2 shui3 xie4"),        // 解 xiè（传统读法；单字「解」多音且常用，必须整词锚定）
+            Map.entry("占卜", "zhan1 bu3"),                // 占 zhān（非 zhàn：占据/占上风）
+            Map.entry("占卦", "zhan1 gua4"),               // 占 zhān（同上；起卦/算卦语境）
+            // ── 单字 key：八卦名/生僻字，几乎只出现在卦象语境，单字命中面更广（含「X卦」「上X下Y」）──
+            Map.entry("乾", "qian2"),   // 乾 qián（非 gān）
+            Map.entry("艮", "gen4"),    // 艮 gèn（非 gěn：方言「脾气艮」）
+            Map.entry("巽", "xun4"),    // 巽 xùn
+            Map.entry("夬", "guai4"),   // 夬 guài
+            Map.entry("姤", "gou4"),    // 姤 gòu
+            Map.entry("蛊", "gu3"),     // 蛊 gǔ
+            // ── 单字 key（生僻但单音，纯兜底）：命中即下发，无多音冲突 ──
+            Map.entry("睽", "kui2"),    // 睽 kuí（火泽睽）
+            Map.entry("蹇", "jian3"),   // 蹇 jiǎn（水山蹇）
+            Map.entry("颐", "yi2"),     // 颐 yí（山雷颐）
+            Map.entry("孚", "fu2"),     // 孚 fú（风泽中孚）
+            // ── 单字 key（周易术语，生僻单音，解卦高频）──
+            Map.entry("爻", "yao2"),    // 爻 yáo（爻辞/六爻/世爻/应爻/动爻）
+            Map.entry("彖", "tuan4"),   // 彖 tuàn（彖辞/彖传）
+            // ── 单字 key（天干地支，六爻纳甲/八字/时辰用，生僻或易混，均单音）──
+            Map.entry("戊", "wu4"),     // 天干·戊 wù（易混戌 xū/戍 shù）
+            Map.entry("壬", "ren2"),    // 天干·壬 rén
+            Map.entry("癸", "gui3"),    // 天干·癸 guǐ
+            Map.entry("寅", "yin2"),    // 地支·寅 yín
+            Map.entry("卯", "mao3"),    // 地支·卯 mǎo
+            Map.entry("巳", "si4"),     // 地支·巳 sì（易混已 yǐ/己 jǐ）
+            Map.entry("酉", "you3"),    // 地支·酉 yǒu
+            Map.entry("戌", "xu1")      // 地支·戌 xū（易混戊 wù/戍 shù）
     );
 
     /**
