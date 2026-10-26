@@ -48,7 +48,7 @@ public class AliyunTtsService implements TtsService {
      * 直接在此维护即可，规模变大也不影响单次请求——见 {@link #buildHotFix(String)} 的按句过滤。
      */
     private static final Map<String, String> PRONUNCIATION_DICT = Map.of(
-            "乾", "qian2"
+            "乾", "qian2", "否", "pi3"
     );
 
     /**
