@@ -40,6 +40,7 @@ import com.xiaozhi.dialogue.llm.factory.PersonaFactory;
 import com.xiaozhi.dialogue.llm.tool.device.IotService;
 import com.xiaozhi.dialogue.playback.Player;
 import com.xiaozhi.dialogue.playback.ScheduledPlayer;
+import com.xiaozhi.dialogue.runtime.Persona;
 import com.xiaozhi.enums.DeviceState;
 import com.xiaozhi.enums.ListenMode;
 import com.xiaozhi.enums.ListenState;
@@ -198,6 +199,9 @@ public class MessageHandler {
         if (chatSession == null) {
             return;
         }
+        // 断连止损：须在 closeSession 摘除会话之前，主动停止上游 TTS 合成与音频推流，
+        // 避免为一条已断开的连接继续白烧云端合成配额、空转推流触发 Broken pipe。
+        stopPlaybackOnDisconnect(chatSession);
         // 清理会话，设备状态由 closeSession 统一写入
         sessionManager.closeSession(sessionId);
         // 清理VAD会话
@@ -205,6 +209,30 @@ public class MessageHandler {
         // 清理AEC会话
         if (aecService != null) aecService.resetSession(sessionId);
 
+    }
+
+    /**
+     * 连接断开时的止损清理：取消语音合成器的上游订阅（停止后续分句与云端 TTS 合成），
+     * 并停止播放器（中断发送线程、清空待发队列），避免服务端为一条已断开的连接继续把
+     * 整段回复合成完、推流空转。
+     * <p>与 {@link DialogueService#abortDialogue} 的区别：连接已断，此处不再发送 tts stop
+     * （否则触发"ChatSession 已关闭"错误日志），也不做打断历史落库（断连非用户主动打断）。
+     * stop()/cancel() 均幂等，与 PersonaCleanup 的清理重复调用无副作用。
+     */
+    private void stopPlaybackOnDisconnect(ChatSession session) {
+        try {
+            Persona persona = session.getPersona();
+            if (persona != null && persona.getSynthesizer() != null) {
+                persona.getSynthesizer().cancel();
+            }
+            Player player = session.getPlayer();
+            if (player != null) {
+                player.stop();
+            }
+        } catch (Exception e) {
+            log.warn("断连止损清理失败 - SessionId: {}, DeviceId: {}, {}",
+                    session.getSessionId(), session.getDeviceIdOrUnknown(), e.getMessage());
+        }
     }
 
     /**
